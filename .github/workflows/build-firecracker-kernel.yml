@@ -1,0 +1,102 @@
+name: Build Firecracker kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_ref:
+        description: Kernel ref to build (tag or branch of linux-stable)
+        required: false
+        default: 'linux-6.12.y'
+      config_path:
+        description: Path to the kernel config, relative to repo root
+        required: false
+        default: '.github/firecracker/kernel.config'
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '0 3 * * 1'
+
+concurrency:
+  group: firecracker-kernel-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      ARCH: x86_64
+      KERNEL_REF: ${{ inputs.kernel_ref || 'linux-6.12.y' }}
+      CONFIG_PATH: ${{ inputs.config_path || '.github/firecracker/kernel.config' }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ env.KERNEL_REF }}-${{ hashFiles('.github/firecracker/kernel.config') }}
+          restore-keys: |
+            ccache-${{ env.KERNEL_REF }}-
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ccache gcc make binutils flex bison bc \
+            libssl-dev libelf-dev cpio dwarves kmod perl
+
+      - name: Fetch Linux source
+        run: |
+          git clone --depth 1 --single-branch \
+            --branch "$KERNEL_REF" \
+            https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git linux
+
+      - name: Configure
+        working-directory: linux
+        run: |
+          cp "$GITHUB_WORKSPACE/$CONFIG_PATH" .config
+          make olddefconfig
+
+      - name: Build kernel
+        working-directory: linux
+        run: |
+          export PATH="/usr/lib/ccache:$PATH"
+          export CCACHE_MAXSIZE=2G
+          make -j "$(nproc)" vmlinux
+
+      - name: Package kernel
+        working-directory: linux
+        run: |
+          VERSION="$(make kernelversion)"
+          sanity_ok="$(file -b vmlinux)"
+          if [[ "$sanity_ok" != *ELF*x86-64* ]]; then
+            echo "Unexpected kernel image type: $sanity_ok" >&2
+            exit 1
+          fi
+          cp .config "$GITHUB_WORKSPACE/kernel-$VERSION.config"
+          cp vmlinux "$GITHUB_WORKSPACE/vmlinux-$VERSION"
+          strip -g vmlinux -o "$GITHUB_WORKSPACE/vmlinux-$VERSION-stripped"
+          cd "$GITHUB_WORKSPACE"
+          sha256sum "vmlinux-$VERSION" "vmlinux-$VERSION-stripped" > SHA256SUMS
+          echo "KERNEL_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firecracker-kernel-${{ env.KERNEL_VERSION }}
+          path: |
+            vmlinux-${{ env.KERNEL_VERSION }}
+            vmlinux-${{ env.KERNEL_VERSION }}-stripped
+            kernel-${{ env.KERNEL_VERSION }}.config
+            SHA256SUMS
+          if-no-files-found: error
