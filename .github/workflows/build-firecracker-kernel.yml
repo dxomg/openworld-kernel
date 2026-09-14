@@ -31,10 +31,25 @@ defaults:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            config_path: ${{ inputs.config_path || '.github/firecracker/kernel.config' }}
+            install: ccache gcc make binutils flex bison bc libssl-dev libelf-dev cpio dwarves kmod perl
+            file_match: 'ELF*x86-64*'
+            strip_bin: strip
+          - arch: arm64
+            config_path: .github/firecracker/kernel.config.arm64
+            install: ccache gcc make binutils gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu flex bison bc libssl-dev libelf-dev cpio dwarves kmod perl
+            file_match: 'ELF*ARM*aarch64*'
+            strip_bin: aarch64-linux-gnu-strip
     env:
-      ARCH: x86_64
+      ARCH: ${{ matrix.arch }}
+      CROSS_COMPILE: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-' || '' }}
       KERNEL_REF: ${{ inputs.kernel_ref || 'linux-6.12.y' }}
-      CONFIG_PATH: ${{ inputs.config_path || '.github/firecracker/kernel.config' }}
+      CONFIG_PATH: ${{ matrix.config_path }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
       - name: Checkout
@@ -44,16 +59,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ env.KERNEL_REF }}-${{ hashFiles('.github/firecracker/kernel.config') }}
+          key: ccache-${{ env.KERNEL_REF }}-${{ matrix.arch }}-${{ hashFiles(matrix.config_path) }}
           restore-keys: |
-            ccache-${{ env.KERNEL_REF }}-
+            ccache-${{ env.KERNEL_REF }}-${{ matrix.arch }}-
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            ccache gcc make binutils flex bison bc \
-            libssl-dev libelf-dev cpio dwarves kmod perl
+          sudo apt-get install -y --no-install-recommends ${{ matrix.install }}
 
       - name: Fetch Linux source
         run: |
@@ -79,24 +92,24 @@ jobs:
         run: |
           VERSION="$(make kernelversion)"
           sanity_ok="$(file -b vmlinux)"
-          if [[ "$sanity_ok" != *ELF*x86-64* ]]; then
+          if [[ "$sanity_ok" != ${{ matrix.file_match }} ]]; then
             echo "Unexpected kernel image type: $sanity_ok" >&2
             exit 1
           fi
-          cp .config "$GITHUB_WORKSPACE/kernel-$VERSION.config"
-          cp vmlinux "$GITHUB_WORKSPACE/vmlinux-$VERSION"
-          strip -g vmlinux -o "$GITHUB_WORKSPACE/vmlinux-$VERSION-stripped"
+          cp .config "$GITHUB_WORKSPACE/kernel-${{ matrix.arch }}-$VERSION.config"
+          cp vmlinux "$GITHUB_WORKSPACE/vmlinux-${{ matrix.arch }}-$VERSION"
+          ${{ matrix.strip_bin }} -g vmlinux -o "$GITHUB_WORKSPACE/vmlinux-${{ matrix.arch }}-$VERSION-stripped"
           cd "$GITHUB_WORKSPACE"
-          sha256sum "vmlinux-$VERSION" "vmlinux-$VERSION-stripped" > SHA256SUMS
+          sha256sum "vmlinux-${{ matrix.arch }}-$VERSION" "vmlinux-${{ matrix.arch }}-$VERSION-stripped" > SHA256SUMS-${{ matrix.arch }}
           echo "KERNEL_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: firecracker-kernel-${{ env.KERNEL_VERSION }}
+          name: firecracker-kernel-${{ matrix.arch }}-${{ env.KERNEL_VERSION }}
           path: |
-            vmlinux-${{ env.KERNEL_VERSION }}
-            vmlinux-${{ env.KERNEL_VERSION }}-stripped
-            kernel-${{ env.KERNEL_VERSION }}.config
-            SHA256SUMS
+            vmlinux-${{ matrix.arch }}-${{ env.KERNEL_VERSION }}
+            vmlinux-${{ matrix.arch }}-${{ env.KERNEL_VERSION }}-stripped
+            kernel-${{ matrix.arch }}-${{ env.KERNEL_VERSION }}.config
+            SHA256SUMS-${{ matrix.arch }}
           if-no-files-found: error
