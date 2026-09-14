@@ -143,6 +143,10 @@ jobs:
 
       - name: Create release
         run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists - recreating it."
+            gh release delete "$RELEASE_TAG" --yes
+          fi
           gh release create "$RELEASE_TAG" \
             artifacts/vmlinux-* artifacts/kernel-*.config artifacts/SHA256SUMS-* \
             --title "Firecracker kernel $RELEASE_VERSION ($BUILD_DATE)" \
