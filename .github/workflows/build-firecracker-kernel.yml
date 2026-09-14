@@ -113,3 +113,37 @@ jobs:
             kernel-${{ matrix.arch }}-${{ env.KERNEL_VERSION }}.config
             SHA256SUMS-${{ matrix.arch }}
           if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    if: always() && !contains(needs.build.result, 'failure') && !contains(needs.build.result, 'cancelled')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Prepare release metadata
+        run: |
+          VERSION="$(basename $(ls artifacts/vmlinux-x86_64-* artifacts/vmlinux-arm64-* | head -1) | sed 's/^vmlinux-//')"
+          BUILD_DATE="$(date -u +%Y-%m-%d)"
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$BUILD_DATE" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=kernel-$VERSION-$BUILD_DATE" >> "$GITHUB_ENV"
+
+      - name: Create release
+        run: |
+          gh release create "$RELEASE_TAG" \
+            artifacts/vmlinux-* artifacts/kernel-*.config artifacts/SHA256SUMS-* \
+            --title "Firecracker kernel $RELEASE_VERSION ($BUILD_DATE)" \
+            --notes "Weekly Firecracker microVM kernel build for Linux $RELEASE_VERSION. x86_64 and arm64 images (unstripped and stripped), per-arch kernel configs and SHA256 checksums."
+
+      - name: Verify release
+        run: gh release view "$RELEASE_TAG" --json name,assets --jq '.name, (.assets[].name)'
