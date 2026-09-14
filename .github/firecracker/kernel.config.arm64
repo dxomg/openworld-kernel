@@ -1,4 +1,5 @@
-# Minimal Linux 6.18 kernel config for Firecracker microVMs (aarch64).
+# Minimal Linux 6.18 LTS kernel config for Firecracker microVMs (aarch64).
+# Size-optimized (-Os): targets a ~10 MB vmlinux image.
 
 # Disable modules - build a fully static, self-contained kernel.
 # CONFIG_MODULES is not set
@@ -28,7 +29,8 @@ CONFIG_NET_NS=y
 CONFIG_BLK_DEV_INITRD=y
 CONFIG_BINFMT_ELF=y
 CONFIG_BINFMT_SCRIPT=y
-CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
+CONFIG_CC_OPTIMIZE_FOR_SIZE=y
+# CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE is not set
 CONFIG_MICROVM=y
 
 # Processor type and features (arm64)
