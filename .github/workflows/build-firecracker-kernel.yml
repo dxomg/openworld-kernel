@@ -124,6 +124,9 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -132,7 +135,7 @@ jobs:
 
       - name: Prepare release metadata
         run: |
-          VERSION="$(basename $(ls artifacts/vmlinux-x86_64-* artifacts/vmlinux-arm64-* | head -1) | sed 's/^vmlinux-//')"
+          VERSION="$(sed -n -e 's/^[^ ]*  vmlinux-x86_64-//p' -e 's/^[^ ]*  vmlinux-arm64-//p' artifacts/SHA256SUMS-x86_64 artifacts/SHA256SUMS-arm64 | head -1)"
           BUILD_DATE="$(date -u +%Y-%m-%d)"
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "BUILD_DATE=$BUILD_DATE" >> "$GITHUB_ENV"
