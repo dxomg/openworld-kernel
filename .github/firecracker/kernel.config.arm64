@@ -1,4 +1,4 @@
-# Minimal Linux 6.12 LTS kernel config for Firecracker microVMs (aarch64).
+# Minimal Linux 6.18 kernel config for Firecracker microVMs (aarch64).
 
 # Disable modules - build a fully static, self-contained kernel.
 # CONFIG_MODULES is not set

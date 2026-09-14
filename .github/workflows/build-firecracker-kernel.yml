@@ -6,7 +6,7 @@ on:
       kernel_ref:
         description: Kernel ref to build (tag or branch of linux-stable)
         required: false
-        default: 'linux-6.12.y'
+        default: 'linux-6.18.y'
       config_path:
         description: Path to the kernel config, relative to repo root
         required: false
@@ -48,7 +48,7 @@ jobs:
     env:
       ARCH: ${{ matrix.arch }}
       CROSS_COMPILE: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-' || '' }}
-      KERNEL_REF: ${{ inputs.kernel_ref || 'linux-6.12.y' }}
+      KERNEL_REF: ${{ inputs.kernel_ref || 'linux-6.18.y' }}
       CONFIG_PATH: ${{ matrix.config_path }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
