@@ -52,7 +52,7 @@ Since this is a size-optimized image, several things a desktop kernel would have
 - **Frame-pointer unwinder** instead of ORC (~1.6 MiB of unwind tables saved).
 - **No KASLR, no MTRR, no halt-poll idle, no ASPM** (x86) — minor, and not needed in a microVM.
 - **No `KALLSYMS`** — oops traces show raw addresses; keep this off for ~small gain or re-enable if you debug crashes.
-- **No speculative-execution mitigation thunks** (retpoline, RETHUNK, IBRS/IBPB, …). `mitigations: Vulnerable` at boot is expected. Re-enable the `MITIGATION_*` options if you must run untrusted code in guests on your own metal. See `# Security` notes in `kernel.config`.
+- **Full CPU speculation mitigations are compiled in** — not trimmed. retpoline, RETHUNK, IBRS/IBPB entry, and every vendor `MITIGATION_*` option (BHI, GDS, RFDS, MDS, TAA, MMIO stale data, L1TF, SRBDS, SSB, ITS, SLS, …) are on, so `/sys/devices/system/cpu/vulnerabilities/*` and the boot log show active mitigations instead of `Vulnerable`. This costs a bit of text size compared to a trimmed build. See the `# Security` notes in `kernel.config`.
 - **No IOMMU, no EFI, no USB/HID/DRM/FB/sound, no SCSI/ATA/NVMe** — out of scope for Firecracker.
 
 ## Why x86_64 is ~5 MiB bigger than arm64
