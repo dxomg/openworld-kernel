@@ -33,13 +33,19 @@ Common to both arches:
 
 - **Block & net**: `virtio_blk`, `virtio_net` (with `virtio-mmio`; plus `virtio-pci` on x86_64)
 - **Console**: virtio console + serial console (8250 on x86, PL011 on arm64), early printk
-- **Balloon**: `virtio_balloon` with aggressive patches (4 MiB batches,
-  20 ms retry, 4 MiB OOM deflate, cache reclaim/drop, 2 MiB page reporting
-  — see `.github/firecracker/patches/`)
+- **Balloon**: `virtio_balloon` with aggressive patches (8 MiB batches,
+  10 ms retry, 16 MiB OOM deflate, reclaim-allowed alloc, drop-caches +
+  dirty-flush on stall, halved watermarks, 5x `vfs_cache_pressure`,
+  halved dirty ratios, 16 KiB / 500 ms page reporting
+  — see `.github/firecracker/patches/`). Set a host balloon target
+  (`amount_mib` from `stats`, `deflate_on_oom:true`) or the guest cannot
+  free host memory by itself.
 - **Networking**: IPv4 + IPv6, `AF_UNIX`, `AF_PACKET`, vsock
 - **Filesystems**: ext4, overlayfs, tmpfs, squashfs (x86_64), vfat (arm64), and `9p`
 - **Init**: built-in initramfs support (gzip), `devtmpfs`
-- **Memory**: swap + zswap (lz4, on by default), hugetlb-free
+- **Memory**: swap + zswap (lz4, on by default), hugetlb-free,
+  THP off (pinned 2 MiB pages are unballoonable), MGLRU on by default,
+  merged slabs, 16 KiB log buffer
 - **Security**: SELinux + AppArmor (LSM chain `lockdown,yama,loadpin,safesetid,apparmor,selinux,bpf`)
 - **Userspace ABI**: io_uring, epoll, eventfd/signalfd/timerfd, membarrier, rseq, futex, POSIX mqueues
 - **SMP**: up to 32 (x86) / 64 (arm64) vCPUs

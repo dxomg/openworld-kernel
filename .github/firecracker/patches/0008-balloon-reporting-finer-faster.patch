@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: openworld-kernel <noreply@openworld>
+Date: Thu, 15 Oct 2026 00:00:00 +0000
+Subject: [PATCH] virtio_balloon: finer and faster free-page reporting
+
+0004's order-9 (2 MiB) reporting still strands sub-2MiB fragments - the
+common state once a guest has run for a while (the "30 MiB used but
+130 MiB on host" gap is mostly fragmented free + cache the host never
+hears about). And the stock 2s reporting delay keeps freed guest memory
+resident on the host for seconds after every free burst.
+
+- Reporting order 9 -> 2 (16 KiB on 4K pages): captures nearly all
+  fragmentation without the per-page virtqueue overhead of order-0.
+  Still overridable at boot via page_reporting.page_reporting_order=.
+- Reporting delay 2s -> 500ms so host RSS converges much closer to
+  guest used after free bursts.
+
+Only active when the host negotiates F_REPORTING (honest note:
+Firecracker's classic balloon path uses amount_mib inflate + stats and
+currently ignores F_REPORTING/F_FREE_PAGE_HINT - the 0002/0003/0006/0007
+reclaim paths are what move the needle there; this patch helps hosts
+that do enable reporting).
+
+Signed-off-by: openworld-kernel <noreply@openworld>
+---
+ drivers/virtio/virtio_balloon.c | 11 +++++++----
+ mm/page_reporting.c             |  7 ++++++-
+ 2 files changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
+index 123456789023..123456789024 100644
+--- a/drivers/virtio/virtio_balloon.c
++++ b/drivers/virtio/virtio_balloon.c
+@@ -1095,13 +1095,15 @@
+ 		vb->pr_dev_info.order = 5;
+ #elif PAGE_SHIFT == 12
+ 		/*
+-		 * Aggressive: report 2MB blocks instead of the default
++		 * Aggressive: report 16KB blocks instead of the default
+ 		 * pageblock-sized ones, so fragmented free memory that can't
+-		 * coalesce into a full pageblock is still reported to the
+-		 * host. 2MB also matches the host THP size, avoiding splits.
++		 * coalesce is still reported to the host. Order-9 (2MB)
++		 * still stranded sub-2MB fragments - the common case once
++		 * a guest has run for a while. Order-2 captures nearly all
++		 * fragmentation without the per-page overhead of order-0.
+ 		 * (Overridable at boot via page_reporting.page_reporting_order.)
+ 		 */
+-		vb->pr_dev_info.order = 9;
++		vb->pr_dev_info.order = 2;
+ #endif
+ 
+ 		err = page_reporting_register(&vb->pr_dev_info);
+diff --git a/mm/page_reporting.c b/mm/page_reporting.c
+index 123456789025..123456789026 100644
+--- a/mm/page_reporting.c
++++ b/mm/page_reporting.c
+@@ -47,7 +47,12 @@
+  */
+ EXPORT_SYMBOL_GPL(page_reporting_order);
+ 
+-#define PAGE_REPORTING_DELAY	(2 * HZ)
++/*
++ * MicroVM: report free pages 4x faster. Stock 2s delay keeps freed guest
++ * memory resident on the host for seconds after every free burst;
++ * 500ms converges host RSS much closer to guest used.
++ */
++#define PAGE_REPORTING_DELAY	(HZ / 2)
+ static struct page_reporting_dev_info __rcu *pr_dev_info __read_mostly;
+ 
+ enum {
+
+-- 
+2.47.0

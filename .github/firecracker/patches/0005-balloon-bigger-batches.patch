@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: openworld-kernel <noreply@openworld>
+Date: Thu, 15 Oct 2026 00:00:00 +0000
+Subject: [PATCH] virtio_balloon: larger batches for dense microVM hosts
+
+Stock (and 0001) batching still needs many inflate/deflate round-trips
+for large adjustments: with 1024 pfns per batch (4 MiB on 4K pages) a
+512 MiB inflate needs 128 tell_host() round-trips, each a synchronous
+virtqueue wait.
+
+Push further for hosts that balloon many microVMs at once:
+
+- 1024 -> 2048 pfns per batch (8 MiB per round-trip on 4K pages, 2x
+  fewer round-trips; the pfn array grows from 4 KiB to 8 KiB - still
+  negligible vs the reclaimed memory).
+- OOM deflate 1024 -> 4096 pages (up to 16 MiB freed per OOM event, so
+  a spiking guest survives instead of OOM-killing in a loop while the
+  host re-inflates).
+
+No behaviour change when the host does not balloon. All virtio feature
+bits are untouched.
+
+Tunable: edit the two defines below to taste.
+
+Signed-off-by: openworld-kernel <noreply@openworld>
+---
+ drivers/virtio/virtio_balloon.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
+index 123456789013..123456789022 100644
+--- a/drivers/virtio/virtio_balloon.c
++++ b/drivers/virtio/virtio_balloon.c
+@@ -26,7 +26,7 @@
+  * page units.
+  */
+ #define VIRTIO_BALLOON_PAGES_PER_PAGE (unsigned int)(PAGE_SIZE >> VIRTIO_BALLOON_PFN_SHIFT)
+-#define VIRTIO_BALLOON_ARRAY_PFNS_MAX 1024
++#define VIRTIO_BALLOON_ARRAY_PFNS_MAX 2048
+ /* Maximum number of (4k) pages to deflate on OOM notifications. */
+-#define VIRTIO_BALLOON_OOM_NR_PAGES 1024
++#define VIRTIO_BALLOON_OOM_NR_PAGES 4096
+ #define VIRTIO_BALLOON_OOM_NOTIFY_PRIORITY 80
+--
+2.47.0
