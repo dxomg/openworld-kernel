@@ -61,7 +61,9 @@ Since this is a size-optimized image, several things a desktop kernel would have
 - **No KASLR, no MTRR, no halt-poll idle, no ASPM** (x86) — minor, and not needed in a microVM.
 - **No `KALLSYMS`** — oops traces show raw addresses; keep this off for ~small gain or re-enable if you debug crashes.
 - **Full CPU speculation mitigations are compiled in** — not trimmed. retpoline, RETHUNK, IBRS/IBPB entry, and every vendor `MITIGATION_*` option (BHI, GDS, RFDS, MDS, TAA, MMIO stale data, L1TF, SRBDS, SSB, ITS, SLS, …) are on, so `/sys/devices/system/cpu/vulnerabilities/*` and the boot log show active mitigations instead of `Vulnerable`. This costs a bit of text size compared to a trimmed build. See the `# Security` notes in `kernel.config`.
-- **No IOMMU, no EFI, no USB/HID/DRM/FB/sound, no SCSI/ATA/NVMe** — out of scope for Firecracker.
+- **No IOMMU, no EFI, no USB/HID/DRM/FB/sound, no SCSI/ATA/NVMe/MMC/MTD** — out of scope for Firecracker.
+- **No physical NICs, no wireless/Bluetooth** (`ETHERNET`, `WLAN`/`WIRELESS`, `BT` off) — the guest sees `virtio_net` only.
+- **No laptop/platform or host-side virt drivers** (`X86_PLATFORM_DEVICES`/`ARM64_PLATFORM_DEVICES`, `SURFACE_PLATFORMS`, `VIRTUALIZATION`, `VHOST`, `VDPA` off) — guest keeps `KVM_GUEST` only.
 
 ## Why x86_64 is ~5 MiB bigger than arm64
 

@@ -56,14 +56,28 @@ CONFIG_ARM_AMBA=y
 CONFIG_PARTITION_ADVANCED=y
 CONFIG_MSDOS_PARTITION=y
 CONFIG_EFI_PARTITION=y
+# CONFIG_MQ_IOSCHED_KYBER is not set
 
-# Networking
+# Networking - Firecracker guest sees virtio-net only: no physical
+# Ethernet NICs (disabling ETHERNET drops all NET_VENDOR_* drivers),
+# no wireless, no Bluetooth. Container networking (veth/bridge/
+# netfilter) stays as-is: enabling it would grow the image.
 CONFIG_NET=y
 CONFIG_NETDEVICES=y
 CONFIG_PACKET=y
 CONFIG_UNIX=y
 CONFIG_INET=y
 CONFIG_IPV6=y
+# CONFIG_ETHERNET is not set
+# CONFIG_WLAN is not set
+# CONFIG_WIRELESS is not set
+# CONFIG_RFKILL is not set
+# CONFIG_BT is not set
+# CONFIG_NFC is not set
+# CONFIG_NETFILTER is not set
+# CONFIG_NET_SCHED is not set
+# CONFIG_BRIDGE is not set
+# CONFIG_VLAN_8021Q is not set
 CONFIG_VSOCKETS=y
 CONFIG_NET_9P=y
 CONFIG_NET_9P_VIRTIO=y
@@ -121,9 +135,29 @@ CONFIG_VIRTIO_NET=y
 CONFIG_VIRTIO_CONSOLE=y
 CONFIG_VIRTIO_BALLOON=y
 CONFIG_VIRTIO_VSOCKETS=y
-# CONFIG_INPUT_MOUSEDEV is not set
+# No keyboard/mouse in a microVM (VT selects INPUT, so the core stays,
+# but all input-device drivers go).
+# CONFIG_INPUT_KEYBOARD is not set
+# CONFIG_INPUT_MOUSE is not set
 # CONFIG_INPUT_JOYSTICK is not set
 # CONFIG_INPUT_MISC is not set
+# CONFIG_INPUT_MOUSEDEV is not set
+# CONFIG_INPUT_EVDEV is not set
+# CONFIG_KEYBOARD_ATKBD is not set
+# CONFIG_MOUSE_PS2 is not set
+# CONFIG_SERIO_I8042 is not set
+
+# No power management in a microVM (no battery, fan, thermal, suspend
+# or CPU frequency scaling).
+# CONFIG_PM is not set
+# CONFIG_SUSPEND is not set
+# CONFIG_HIBERNATION is not set
+# CONFIG_CPU_FREQ is not set
+# CONFIG_CPU_IDLE is not set
+# CONFIG_POWER_SUPPLY is not set
+# CONFIG_HWMON is not set
+# CONFIG_PTP_1588_CLOCK is not set
+# CONFIG_PPS is not set
 
 # Serial console (Firecracker requirement)
 CONFIG_SERIAL_EARLYCON=y
@@ -133,17 +167,32 @@ CONFIG_SERIAL_CORE=y
 CONFIG_SERIAL_CORE_CONSOLE=y
 CONFIG_TTY=y
 CONFIG_UNIX98_PTYS=y
+# CONFIG_LEGACY_PTYS is not set
+# CONFIG_LEGACY_TIOCSTI is not set
 
-# Disable host-oriented subsystems
+# Disable host-oriented subsystems and unneeded instrumentation.
+# Firecracker-only guest: no platform drivers, no host-side vhost,
+# no physical storage/media/bus drivers, no tracing (matches x86).
+# CONFIG_ARM64_PLATFORM_DEVICES is not set
+# CONFIG_SURFACE_PLATFORMS is not set
+# CONFIG_VHOST_MENU is not set
+# CONFIG_VDPA is not set
+# CONFIG_UPROBES is not set
+# CONFIG_KPROBES is not set
+# CONFIG_FTRACE is not set
+# CONFIG_TRACING is not set
 # CONFIG_BLK_DEV_SD is not set
 # CONFIG_ATA is not set
 # CONFIG_SCSI is not set
+# CONFIG_NVME_CORE is not set
+# CONFIG_NVME_FABRICS is not set
+# CONFIG_MMC is not set
+# CONFIG_MEMSTICK is not set
+# CONFIG_MTD is not set
 # CONFIG_EFI is not set
 # CONFIG_SOUND is not set
 # CONFIG_HID is not set
 # CONFIG_USB_SUPPORT is not set
-# CONFIG_WIRELESS is not set
-# CONFIG_BT is not set
 # CONFIG_DRM is not set
 # CONFIG_FB is not set
 
