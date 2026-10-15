@@ -13,12 +13,17 @@ reclaim what is already free.
 For overcommitted Firecracker hosts that want the balloon to take *more*,
 not just converge faster:
 
-- __GFP_NORETRY -> __GFP_RETRY_MAYFAIL. The allocator may now run direct
-  reclaim (drop clean file cache, shrink reclaimable slab) to satisfy
-  balloon allocations, but still fails instead of invoking the OOM killer
-  when nothing is reclaimable.
-- __GFP_NOMEMALLOC is kept so the balloon never dips into watermarks
-  reserves; __GFP_NOWARN is kept to stay quiet under pressure.
+- __GFP_NORETRY -> __GFP_RETRY_MAYFAIL, __GFP_NOMEMALLOC dropped in
+  favour of __GFP_HIGH | __GFP_MEMALLOC. The allocator may now run
+  direct reclaim (drop clean file cache, shrink reclaimable slab) AND
+  dip into watermark reserves with priority to satisfy balloon
+  allocations, but still fails instead of invoking the OOM killer
+  when nothing is reclaimable. __GFP_NOWARN is kept to stay quiet
+  under pressure.
+- WARNING: dipping into reserves is the most aggressive setting - the
+  guest keeps almost no safety margin while the host inflates hard.
+  Keep a ~10-20 MiB slack in the host balloon target and
+  deflate_on_oom so a spiking guest survives.
 
 Effect: inflating the balloon now converts guest page cache into
 host-reclaimable memory. A guest showing e.g. 30 MiB used + 70 MiB cache
@@ -32,25 +37,29 @@ Tunable: revert this hunk to restore stock fail-fast behaviour.
 
 Signed-off-by: openworld-kernel <noreply@openworld>
 ---
- mm/balloon_compaction.c | 7 ++++++-
- 1 file changed, 6 insertions(+), 1 deletion(-)
+ mm/balloon_compaction.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
 
 diff --git a/mm/balloon_compaction.c b/mm/balloon_compaction.c
 index 123456789014..123456789015 100644
 --- a/mm/balloon_compaction.c
 +++ b/mm/balloon_compaction.c
-@@ -120,8 +120,13 @@
+@@ -120,8 +120,17 @@
   */
  struct page *balloon_page_alloc(void)
  {
 +	/*
-+	 * Aggressive: allow direct reclaim (drop file cache, shrink
-+	 * reclaimable slab) so the balloon can also take cached memory,
-+	 * but fail instead of OOM-killing when nothing is reclaimable.
++	 * Maximum reclaim: allow direct reclaim (drop file cache, shrink
++	 * reclaimable slab) AND dip into watermark reserves with priority,
++	 * so the balloon can take cached memory plus almost everything
++	 * free. Still fails instead of OOM-killing when nothing is
++	 * reclaimable. WARNING: reserves are the guest's last safety
++	 * margin - keep host-side slack + deflate_on_oom.
 +	 */
  	struct page *page = alloc_page(balloon_mapping_gfp_mask() |
 -				       __GFP_NOMEMALLOC | __GFP_NORETRY |
-+				       __GFP_NOMEMALLOC | __GFP_RETRY_MAYFAIL |
++				       __GFP_HIGH | __GFP_MEMALLOC |
++				       __GFP_RETRY_MAYFAIL |
  				       __GFP_NOWARN);
  	return page;
  }

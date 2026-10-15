@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: openworld-kernel <noreply@openworld>
+Date: Thu, 15 Oct 2026 00:00:00 +0000
+Subject: [PATCH] virtio_balloon: drain the full OOM deflate budget across batches
+
+0005 raises VIRTIO_BALLOON_OOM_NR_PAGES to 32768 (128 MiB), but a single
+leak_balloon() call moves at most VIRTIO_BALLOON_ARRAY_PFNS_MAX pfns
+per tell_host() round-trip (32 MiB with the 8192 batch) - the rest of
+the budget was silently discarded, so an OOM event still freed only
+one batch.
+
+Loop leak_balloon() until the 128 MiB budget is freed or no progress
+is made (fully-pinned balloon), updating the actual size after. A
+spiking guest now gets up to 4x32 MiB back per OOM event instead of
+OOM-killing in a loop while the host re-inflates.
+
+No behaviour change when the balloon is empty (first leak returns 0)
+or the host does not balloon.
+
+Signed-off-by: openworld-kernel <noreply@openworld>
+---
+ drivers/virtio/virtio_balloon.c | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
+index 123456789024..123456789025 100644
+--- a/drivers/virtio/virtio_balloon.c
++++ b/drivers/virtio/virtio_balloon.c
+@@ -914,8 +914,22 @@
+ 						 struct virtio_balloon, oom_nb);
+ 	unsigned long *freed = parm;
+ 
+-	*freed += leak_balloon(vb, VIRTIO_BALLOON_OOM_NR_PAGES) /
+-		  VIRTIO_BALLOON_PAGES_PER_PAGE;
++	unsigned long remaining = VIRTIO_BALLOON_OOM_NR_PAGES;
++	unsigned long got;
++
++	/*
++	 * Maximum survival: drain up to OOM_NR_PAGES across multiple
++	 * tell_host() batches (one leak_balloon() moves at most
++	 * ARRAY_PFNS_MAX). Stop on no progress so a fully-pinned
++	 * balloon cannot livelock OOM handling.
++	 */
++	while (remaining) {
++		got = leak_balloon(vb, remaining);
++		if (!got)
++			break;
++		*freed += got / VIRTIO_BALLOON_PAGES_PER_PAGE;
++		remaining -= got;
++	}
+ 	update_balloon_size(vb);
+ 
+ 	return NOTIFY_OK;
+-- 
+2.47.0

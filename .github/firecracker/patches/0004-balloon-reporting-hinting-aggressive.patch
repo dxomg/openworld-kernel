@@ -16,34 +16,37 @@ host instead of stranding in the guest:
   splits. Still overridable at boot via
   page_reporting.page_reporting_order=.
 - Free-page-hint allocation: VIRTIO_BALLOON_FREE_PAGE_ALLOC_FLAG loses
-  __GFP_NORETRY in favour of __GFP_RETRY_MAYFAIL (same treatment as
-  balloon_page_alloc), so 4MB hint blocks survive pressure via reclaim
-  instead of failing fast, while still failing rather than OOM-killing.
+  __GFP_NORETRY/__GFP_NOMEMALLOC in favour of __GFP_RETRY_MAYFAIL |
+  __GFP_HIGH | __GFP_MEMALLOC (same as balloon_page_alloc), so 4MB
+  hint blocks survive pressure via reclaim plus reserves instead of
+  failing fast, while still failing rather than OOM-killing.
 
 Only active when the host negotiates F_REPORTING / F_FREE_PAGE_HINT
 (Firecracker: free_page_reporting / free_page_hinting device options).
 
 Signed-off-by: openworld-kernel <noreply@openworld>
 ---
- drivers/virtio/virtio_balloon.c | 16 +++++++++++++++-
- 1 file changed, 15 insertions(+), 1 deletion(-)
+ drivers/virtio/virtio_balloon.c | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
 index 123456789016..123456789021 100644
 --- a/drivers/virtio/virtio_balloon.c
 +++ b/drivers/virtio/virtio_balloon.c
-@@ -31,7 +31,12 @@
+@@ -31,7 +31,13 @@
  #define VIRTIO_BALLOON_OOM_NR_PAGES 1024
  #define VIRTIO_BALLOON_OOM_NOTIFY_PRIORITY 80
 
--#define VIRTIO_BALLOON_FREE_PAGE_ALLOC_FLAG (__GFP_NORETRY | __GFP_NOWARN | \
 +/*
-+ * Aggressive: allow reclaim for free-page-hint blocks too, so 4MB hint
-+ * blocks survive pressure instead of failing fast. Still fails (rather
-+ * than OOM-killing) when nothing is reclaimable.
++ * Maximum reclaim: allow reclaim plus reserves for free-page-hint
++ * blocks too, so 4MB hint blocks survive pressure instead of failing
++ * fast. Still fails (rather than OOM-killing) when nothing is
++ * reclaimable.
 + */
+-#define VIRTIO_BALLOON_FREE_PAGE_ALLOC_FLAG (__GFP_NORETRY | __GFP_NOWARN | \
+-					     __GFP_NOMEMALLOC)
 +#define VIRTIO_BALLOON_FREE_PAGE_ALLOC_FLAG (__GFP_RETRY_MAYFAIL | __GFP_NOWARN | \
- 					     __GFP_NOMEMALLOC)
++					     __GFP_HIGH | __GFP_MEMALLOC)
  /* The order of free page blocks to report to host */
  #define VIRTIO_BALLOON_HINT_BLOCK_ORDER MAX_PAGE_ORDER
 @@ -1073,6 +1078,15 @@

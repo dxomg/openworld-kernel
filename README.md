@@ -33,11 +33,11 @@ Common to both arches:
 
 - **Block & net**: `virtio_blk`, `virtio_net` (with `virtio-mmio`; plus `virtio-pci` on x86_64)
 - **Console**: virtio console + serial console (8250 on x86, PL011 on arm64), early printk
-- **Balloon**: `virtio_balloon` with aggressive patches (8 MiB batches,
-  10 ms retry, 16 MiB OOM deflate, reclaim-allowed alloc, drop-caches +
-  dirty-flush on stall, halved watermarks, 5x `vfs_cache_pressure`,
-  halved dirty ratios, 16 KiB / 500 ms page reporting
-  — see `.github/firecracker/patches/`). Set a host balloon target
+- **Balloon**: `virtio_balloon` with maximum-reclaim patches (32 MiB batches,
+  ~1 ms retry, 128 MiB OOM deflate across looped batches, reserves allowed
+  for balloon alloc, drop-caches + dirty-flush on stall, quartered watermarks,
+  10x `vfs_cache_pressure`, floored dirty ratios (1/2), order-0 / 100 ms
+  page reporting — see `.github/firecracker/patches/`). Set a host balloon target
   (`amount_mib` from `stats`, `deflate_on_oom:true`) or the guest cannot
   free host memory by itself.
 - **Networking**: IPv4 + IPv6, `AF_UNIX`, `AF_PACKET`, vsock

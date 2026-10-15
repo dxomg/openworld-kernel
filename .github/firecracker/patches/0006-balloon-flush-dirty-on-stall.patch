@@ -14,9 +14,11 @@ Extend the stall path in fill_balloon():
 - on the first stalled allocation, wake the flusher threads
   (WB_REASON_VMSCAN, same reason vmscan uses) so dirty pages start
   cleaning, then drop clean cache/slab and retry,
-- on the second stall, sleep 10ms to let that writeback complete,
+- on the second stall, sleep ~1ms (usleep_range) to let that writeback complete,
   drop again and retry once more before giving up the batch,
-- retry sleep 20ms -> 10ms so large inflates converge faster.
+- retry sleeps 20ms/10ms -> ~1ms usleep_range (12x faster at HZ=250,
+  where msleep(10) is really 12ms); the outer update_balloon_size work
+  requeues until diff==0, so yielding fast and retrying beats sleeping.
 
 Only dirty data is flushed; clean data is dropped as before. Needs
 <linux/writeback.h> for wakeup_flusher_threads().
@@ -64,7 +66,7 @@ index 123456789022..123456789023 100644
 +			 * completed - drop again and retry once before
 +			 * giving up the batch.
 +			 */
-+			msleep(10);
++			usleep_range(500, 1500);
  			balloon_drop_caches();
  			page = balloon_page_alloc();
  		}
@@ -73,7 +75,7 @@ index 123456789022..123456789023 100644
  			 * faster under pressure (outer work requeues on diff).
  			 */
 -			msleep(20);
-+			msleep(10);
++			usleep_range(500, 1500);
  			break;
  		}
  

@@ -13,16 +13,16 @@ checkout before `make olddefconfig`, via the `Apply kernel patches` step in
   - allocation-failure retry sleep `200ms -> 20ms`,
   - OOM deflate `256 -> 1024` pages per event.
   - No new Kconfig; no feature-bit changes. Tune by editing the defines.
-- `0002-balloon-reclaim-cache-aggressive.patch` — reclaim **larger**:
+- `0002-balloon-reclaim-cache-aggressive.patch` — reclaim **everything**:
   - `balloon_page_alloc()` (`mm/balloon_compaction.c`):
-    `__GFP_NORETRY -> __GFP_RETRY_MAYFAIL`, so balloon allocations may run
-    direct reclaim (drop clean file cache, shrink reclaimable slab) and
-    convert cached memory into host-reclaimable memory, while still
-    failing instead of OOM-killing. `__GFP_NOMEMALLOC` is kept so reserves
-    are never touched.
-  - Tradeoff: inflating under cache pressure costs direct-reclaim CPU and
-    drops guest cache (re-reads cost I/O). Revert this hunk for stock
-    fail-fast behaviour.
+    `__GFP_NORETRY`/`__GFP_NOMEMALLOC` -> `__GFP_RETRY_MAYFAIL` +
+    `__GFP_HIGH` | `__GFP_MEMALLOC`, so balloon allocations run
+    direct reclaim (drop clean file cache, shrink reclaimable slab)
+    AND dip into watermark reserves with priority, while still
+    failing instead of OOM-killing. `__GFP_NOWARN` is kept.
+  - Tradeoff: while the host inflates hard the guest keeps almost no
+    safety margin - keep ~10-20 MiB host-side slack plus
+    `deflate_on_oom`. Revert this hunk for stock fail-fast behaviour.
 - `0003-balloon-drop-caches-on-stall.patch` — drain cache in one shot:
   - new `balloon_drop_caches()` in `fs/drop_caches.c` (= `echo 3 >
     /proc/sys/vm/drop_caches`, declared in `include/linux/swap.h`),
@@ -38,36 +38,54 @@ checkout before `make olddefconfig`, via the `Apply kernel patches` step in
     its order-5 special-case), so free memory that can't coalesce into a
     full pageblock is still reported. 2MB matches host THP size, avoiding
     splits. Still overridable via `page_reporting.page_reporting_order=`.
-  - free-page-hint blocks: `__GFP_NORETRY -> __GFP_RETRY_MAYFAIL`, so 4MB
-    hint blocks survive pressure instead of failing fast.
-- `0005-balloon-bigger-batches.patch` — fewer round-trips, safer spikes:
-  - batch `1024 -> 2048` pfns (4 MiB -> 8 MiB per `tell_host()` on 4K
-    pages; pfn array 4 KiB -> 8 KiB),
-  - OOM deflate `1024 -> 4096` pages (up to 16 MiB freed per OOM event).
+  - free-page-hint blocks: `__GFP_NORETRY`/`__GFP_NOMEMALLOC` ->
+    `__GFP_RETRY_MAYFAIL` | `__GFP_HIGH` | `__GFP_MEMALLOC`, so 4MB
+    hint blocks survive pressure via reclaim plus reserves
+    instead of failing fast, while still failing rather than OOM-killing.
+- `0005-balloon-bigger-batches.patch` — maximum batches, biggest chunks:
+  - batch `1024 -> 8192` pfns (4 MiB -> 32 MiB per `tell_host()` on 4K
+    pages, 16x fewer round-trips than stock; pfn array 4 KiB -> 32 KiB,
+    still a cheap probe-time kzalloc - larger risks high-order alloc
+    failure which would kill the balloon entirely),
+  - OOM deflate `1024 -> 32768` pages (up to 128 MiB freed per OOM event
+    via 0009's drain loop; one `leak_balloon()` batch caps at 32 MiB).
 - `0006-balloon-flush-dirty-on-stall.patch` — close the dirty-cache gap
   (the classic "guest uses 30 MiB, host shows 130 MiB" when the rest is
   dirty + clean cache, which `drop_caches` alone cannot drop):
   - on first stall, `wakeup_flusher_threads(WB_REASON_VMSCAN)` so dirty
     pages start cleaning, then `balloon_drop_caches()` + retry,
-  - on second stall, `msleep(10)` for that writeback, drop + retry once
-    more before giving up the batch; retry sleep `20ms -> 10ms`.
+  - on second stall, `usleep_range(500, 1500)` (~1ms) for that writeback,
+    drop + retry once more before giving up the batch; retry sleeps
+    `20ms/10ms -> ~1ms` (`msleep(10)` is really 12ms at `HZ=250`).
+    The outer `update_balloon_size` work requeues until `diff==0`,
+    so yielding fast and retrying beats sleeping.
   - needs `<linux/writeback.h>` (6.18 single-arg wakeup).
-- `0007-mm-lower-floor-for-microvms.patch` — lower the unreclaimable
-  floor (all runtime-tunable, so host policy can still override):
-  - `min_free_kbytes` curve halved (`sqrt(lowmem*16)/2`, cap
-    `262144 -> 131072`; 128-1024 MiB guests free ~1-2 MiB),
-  - `vfs_cache_pressure` `100 -> 500` (dentry/inode slab becomes
-    balloonable faster),
-  - `dirty_background_ratio` `10 -> 5`, `vm_dirty_ratio` `20 -> 10`
-    (dirty pages clean sooner, hence droppable/balloonable sooner).
-- `0008-balloon-reporting-finer-faster.patch` — don't strand fragments:
-  - reporting order `9 -> 2` (16 KiB on 4K pages; order-9 still left
-    sub-2MiB fragments stranded - the common state after uptime),
-  - reporting delay `2s -> 500ms` so host RSS tracks guest frees.
+- `0007-mm-lower-floor-for-microvms.patch` — floor the unreclaimable
+  minimum (all runtime-tunable, so host policy can still override):
+  - `min_free_kbytes` curve quartered (`sqrt(lowmem*16)/4`, cap
+    `262144 -> 65536`; 128-1024 MiB guests free ~2-3 MiB),
+  - `vfs_cache_pressure` `100 -> 1000` (dentry/inode slab becomes
+    balloonable much faster),
+  - `dirty_background_ratio` `10 -> 1`, `vm_dirty_ratio` `20 -> 2`
+    (dirty pages clean almost immediately, hence droppable/balloonable
+    sooner; sustained-write throughput pays the price).
+  - Tip: with a swap device, also raise `vm.swappiness` at runtime
+    (`sysctl vm.swappiness=100`) so reclaim-allowed balloon allocations
+    can convert anon into host-reclaimable memory.
+- `0008-balloon-reporting-finer-faster.patch` — strand nothing:
+  - reporting order `2 -> 0` (4 KiB on 4K pages: every free page is
+    reported, at the cost of more per-report virtqueue traffic),
+  - reporting delay `2s -> 100ms` so host RSS tracks guest frees almost
+    immediately (more reporting wakeups under churn).
   - Honest note: Firecracker's classic balloon path (`amount_mib` +
     stats) currently ignores `F_REPORTING`/`F_FREE_PAGE_HINT`, so on
     Firecracker the 0002/0003/0006/0007 reclaim paths are what move host
     RSS; this patch helps hosts that do enable reporting.
+- `0009-balloon-drain-oom-budget.patch` — survive spikes: loop
+  `leak_balloon()` until the 128 MiB OOM budget is freed or no progress
+  is made (one call moves at most one 32 MiB batch). A spiking guest
+  gets up to 4x32 MiB back per OOM event instead of OOM-killing in a
+  loop while the host re-inflates. No-op when the balloon is empty.
 
 ## Host side (Firecracker) - required for the savings
 
@@ -88,7 +106,7 @@ take; the host must still ask. For minimal host RSS (`free -m` says
 Poll `balloon stats` (`mem_free`, `mem_available`, `caches`) per VM and
 set `amount_mib = max(0, vm_ram - (mem_available + slack))` with a
 ~10-20 MiB slack so the guest never OOMs; `deflate_on_oom` (patched to
-16 MiB/event) is the safety net. Without a balloon target the guest
+drain up to 128 MiB/event) is the safety net. Without a balloon target the guest
 cannot free host memory by itself - that is why "guest 30 MiB / host
 130 MiB" happens with no balloon policy.
 

@@ -6,25 +6,25 @@ Subject: [PATCH] mm: lower unreclaimable floor for microVM overcommit
 Even with reclaim-allowed balloon allocation and drop-caches-on-stall,
 three stock defaults keep MiBs stranded on the host behind the balloon:
 
-- min_free_kbytes watermarks are unballoonable reserves. Halve the
-  stock sqrt(lowmem*16) curve (128-1024MB guests: ~1-2 MiB freed).
+- min_free_kbytes watermarks are unballoonable reserves. Quarter the
+  stock sqrt(lowmem*16) curve (128-1024MB guests: ~2-3 MiB freed).
   Fresh microVMs boot with empty caches so the smaller reserve is safe.
   Tunable at runtime via /proc/sys/vm/min_free_kbytes.
-- vfs_cache_pressure 100 -> 500. Dentry/inode slab is otherwise
-  unballoonable and strands MiBs on file-heavy guests; 5x pressure
+- vfs_cache_pressure 100 -> 1000. Dentry/inode slab is otherwise
+  unballoonable and strands MiBs on file-heavy guests; 10x pressure
   converts it into balloonable memory faster.
   Tunable at runtime via /proc/sys/vm/vfs_cache_pressure.
-- dirty ratios halved (background 10 -> 5, ratio 20 -> 10) so dirty
+- dirty ratios floored (background 10 -> 1, ratio 20 -> 2) so dirty
   pages start writeback sooner and become clean (hence droppable and
   balloonable) sooner instead of pinning host memory.
   Tunable at runtime via /proc/sys/vm/dirty_{background_,}ratio.
 
 Signed-off-by: openworld-kernel <noreply@openworld>
 ---
- fs/dcache.c          | 8 +++++++-
- mm/page-writeback.c  | 10 ++++++++--
- mm/page_alloc.c      | 11 ++++++++++-
- 3 files changed, 25 insertions(+), 4 deletions(-)
+fs/dcache.c          | 8 +++++++-
+mm/page-writeback.c  | 9 +++++++--
+mm/page_alloc.c      | 12 +++++++++---
+ 3 files changed, 23 insertions(+), 6 deletions(-)
 
 diff --git a/fs/dcache.c b/fs/dcache.c
 index 123456789030..123456789031 100644
@@ -36,12 +36,12 @@ index 123456789030..123456789031 100644
   */
 -static int sysctl_vfs_cache_pressure __read_mostly = 100;
 +/*
-+ * MicroVM: reclaim dentries/inodes 5x more aggressively. Dentry/inode
++ * MicroVM: reclaim dentries/inodes 10x more aggressively. Dentry/inode
 + * slab is otherwise unballoonable and strands MiBs on the host; higher
 + * pressure converts it into balloonable memory faster.
 + * (Tunable at runtime via /proc/sys/vm/vfs_cache_pressure.)
 + */
-+static int sysctl_vfs_cache_pressure __read_mostly = 500;
++static int sysctl_vfs_cache_pressure __read_mostly = 1000;
  static int sysctl_vfs_cache_pressure_denom __read_mostly = 100;
  
  unsigned long vfs_pressure_ratio(unsigned long val)
@@ -57,7 +57,7 @@ index 123456789032..123456789033 100644
 +/* MicroVM: start background writeback sooner so dirty pages become
 + * clean (hence droppable/balloonable) sooner. Tunable via
 + * /proc/sys/vm/dirty_background_ratio. */
-+static int dirty_background_ratio = 5;
++static int dirty_background_ratio = 1;
  
  /*
   * dirty_background_bytes starts at 0 (disabled) so that it is a function of
@@ -68,7 +68,7 @@ index 123456789032..123456789033 100644
 -static int vm_dirty_ratio = 20;
 +/* MicroVM: throttle dirty generators sooner; dirty pages pin host
 + * memory until writeback. Tunable via /proc/sys/vm/dirty_ratio. */
-+static int vm_dirty_ratio = 10;
++static int vm_dirty_ratio = 2;
  
  /*
   * vm_dirty_bytes starts at 0 (disabled) so that it is a function of
@@ -82,20 +82,22 @@ index 123456789034..123456789035 100644
  	lowmem_kbytes = nr_free_buffer_pages() * (PAGE_SIZE >> 10);
 -	new_min_free_kbytes = int_sqrt(lowmem_kbytes * 16);
 +	/*
-+	 * MicroVM: halve the stock sqrt(lowmem*16) reserve. Watermark
++	 * MicroVM: quarter the stock sqrt(lowmem*16) reserve. Watermark
 +	 * reserves are unballoonable; on 128-1024 MiB guests this frees
-+	 * ~1-2 MiB of host RSS. Fresh microVMs boot with empty caches,
++	 * ~2-3 MiB of host RSS. Fresh microVMs boot with empty caches,
 +	 * so the smaller reserve is safe.
 +	 * (Tunable at runtime via /proc/sys/vm/min_free_kbytes.)
 +	 */
-+	new_min_free_kbytes = int_sqrt(lowmem_kbytes * 16) / 2;
++	new_min_free_kbytes = int_sqrt(lowmem_kbytes * 16) / 4;
  
  	if (new_min_free_kbytes > user_min_free_kbytes)
 -		min_free_kbytes = clamp(new_min_free_kbytes, 128, 262144);
-+		min_free_kbytes = clamp(new_min_free_kbytes, 128, 131072);
++		min_free_kbytes = clamp(new_min_free_kbytes, 128, 65536);
  	else
  		pr_warn("min_free_kbytes is not updated to %d because user defined value %d is preferred\n",
  				new_min_free_kbytes, user_min_free_kbytes);
 
+-- 
+2.47.0
 -- 
 2.47.0

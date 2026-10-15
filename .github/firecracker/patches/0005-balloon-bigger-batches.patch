@@ -1,21 +1,26 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: openworld-kernel <noreply@openworld>
 Date: Thu, 15 Oct 2026 00:00:00 +0000
-Subject: [PATCH] virtio_balloon: larger batches for dense microVM hosts
+Subject: [PATCH] virtio_balloon: maximum batches for dense microVM hosts
 
 Stock (and 0001) batching still needs many inflate/deflate round-trips
 for large adjustments: with 1024 pfns per batch (4 MiB on 4K pages) a
 512 MiB inflate needs 128 tell_host() round-trips, each a synchronous
 virtqueue wait.
 
-Push further for hosts that balloon many microVMs at once:
+Push to the practical maximum for hosts that balloon many microVMs at
+once:
 
-- 1024 -> 2048 pfns per batch (8 MiB per round-trip on 4K pages, 2x
-  fewer round-trips; the pfn array grows from 4 KiB to 8 KiB - still
-  negligible vs the reclaimed memory).
-- OOM deflate 1024 -> 4096 pages (up to 16 MiB freed per OOM event, so
-  a spiking guest survives instead of OOM-killing in a loop while the
-  host re-inflates).
+- 1024 -> 8192 pfns per batch (32 MiB per round-trip on 4K pages, 16x
+  fewer round-trips than stock; the pfn array grows from 4 KiB to
+  32 KiB - still negligible vs the reclaimed memory, and still a single
+  cheap kzalloc at probe time. Larger (16384+) risks probe-time
+  high-order allocation failure, which would kill the balloon entirely).
+- OOM deflate 1024 -> 32768 pages (up to 128 MiB freed per OOM event
+  once 0009's drain loop is applied; each tell_host() batch is still
+  capped at 8192 pfns, so this is 4 looped batches. Without the loop a
+  single leak_balloon() call clamps to the array size, i.e. 32 MiB -
+  still 2x the previous 16 MiB).
 
 No behaviour change when the host does not balloon. All virtio feature
 bits are untouched.
@@ -36,10 +41,10 @@ index 123456789013..123456789022 100644
   */
  #define VIRTIO_BALLOON_PAGES_PER_PAGE (unsigned int)(PAGE_SIZE >> VIRTIO_BALLOON_PFN_SHIFT)
 -#define VIRTIO_BALLOON_ARRAY_PFNS_MAX 1024
-+#define VIRTIO_BALLOON_ARRAY_PFNS_MAX 2048
++#define VIRTIO_BALLOON_ARRAY_PFNS_MAX 8192
  /* Maximum number of (4k) pages to deflate on OOM notifications. */
 -#define VIRTIO_BALLOON_OOM_NR_PAGES 1024
-+#define VIRTIO_BALLOON_OOM_NR_PAGES 4096
++#define VIRTIO_BALLOON_OOM_NR_PAGES 32768
  #define VIRTIO_BALLOON_OOM_NOTIFY_PRIORITY 80
 --
 2.47.0
