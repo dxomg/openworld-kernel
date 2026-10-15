@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: openworld-kernel <noreply@openworld>
+Date: Thu, 15 Oct 2026 00:00:00 +0000
+Subject: [PATCH] virtio_balloon: finer free-page reporting and harder
+ free-page hinting
+
+Two reporting-path improvements so idle/fragmented memory reaches the
+host instead of stranding in the guest:
+
+- Page reporting order: the default (pageblock_order, 4MB on 4K) only
+  reports fully-coalesced pageblocks, so fragmented free memory that can't
+  coalesce is never reported. On 4K-page kernels report order-9 (2MB)
+  blocks instead, like the existing ARM64/64K special-case reports 2MB.
+  The reporting core scans that order upward, so both 2MB and 4MB free
+  chunks are reported. 2MB also matches the host THP size, avoiding THP
+  splits. Still overridable at boot via
+  page_reporting.page_reporting_order=.
+- Free-page-hint allocation: VIRTIO_BALLOON_FREE_PAGE_ALLOC_FLAG loses
+  __GFP_NORETRY in favour of __GFP_RETRY_MAYFAIL (same treatment as
+  balloon_page_alloc), so 4MB hint blocks survive pressure via reclaim
+  instead of failing fast, while still failing rather than OOM-killing.
+
+Only active when the host negotiates F_REPORTING / F_FREE_PAGE_HINT
+(Firecracker: free_page_reporting / free_page_hinting device options).
+
+Signed-off-by: openworld-kernel <noreply@openworld>
+---
+ drivers/virtio/virtio_balloon.c | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
+index 123456789016..123456789021 100644
+--- a/drivers/virtio/virtio_balloon.c
++++ b/drivers/virtio/virtio_balloon.c
+@@ -31,7 +31,12 @@
+ #define VIRTIO_BALLOON_OOM_NR_PAGES 1024
+ #define VIRTIO_BALLOON_OOM_NOTIFY_PRIORITY 80
+
+-#define VIRTIO_BALLOON_FREE_PAGE_ALLOC_FLAG (__GFP_NORETRY | __GFP_NOWARN | \
++/*
++ * Aggressive: allow reclaim for free-page-hint blocks too, so 4MB hint
++ * blocks survive pressure instead of failing fast. Still fails (rather
++ * than OOM-killing) when nothing is reclaimable.
++ */
++#define VIRTIO_BALLOON_FREE_PAGE_ALLOC_FLAG (__GFP_RETRY_MAYFAIL | __GFP_NOWARN | \
+ 					     __GFP_NOMEMALLOC)
+ /* The order of free page blocks to report to host */
+ #define VIRTIO_BALLOON_HINT_BLOCK_ORDER MAX_PAGE_ORDER
+@@ -1073,6 +1078,15 @@
+ 		 */
+ #if defined(CONFIG_ARM64) && defined(CONFIG_ARM64_64K_PAGES)
+ 		vb->pr_dev_info.order = 5;
++#elif PAGE_SHIFT == 12
++		/*
++		 * Aggressive: report 2MB blocks instead of the default
++		 * pageblock-sized ones, so fragmented free memory that can't
++		 * coalesce into a full pageblock is still reported to the
++		 * host. 2MB also matches the host THP size, avoiding splits.
++		 * (Overridable at boot via page_reporting.page_reporting_order.)
++		 */
++		vb->pr_dev_info.order = 9;
+ #endif
+
+ 		err = page_reporting_register(&vb->pr_dev_info);
+
+--
+2.47.0

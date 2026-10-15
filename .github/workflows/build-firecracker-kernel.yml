@@ -59,7 +59,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ env.KERNEL_REF }}-${{ matrix.arch }}-${{ hashFiles(matrix.config_path) }}
+          key: ccache-${{ env.KERNEL_REF }}-${{ matrix.arch }}-${{ hashFiles(matrix.config_path, '.github/firecracker/patches/*.patch') }}
           restore-keys: |
             ccache-${{ env.KERNEL_REF }}-${{ matrix.arch }}-
 
@@ -73,6 +73,20 @@ jobs:
           git clone --depth 1 --single-branch \
             --branch "$KERNEL_REF" \
             https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git linux
+
+      - name: Apply kernel patches
+        working-directory: linux
+        run: |
+          shopt -s nullglob
+          patches=( "$GITHUB_WORKSPACE/.github/firecracker/patches/"*.patch )
+          if (( ${#patches[@]} == 0 )); then
+            echo "No kernel patches to apply."
+            exit 0
+          fi
+          for p in "${patches[@]}"; do
+            echo "Applying $(basename "$p")"
+            patch -p1 --forward < "$p"
+          done
 
       - name: Configure
         working-directory: linux

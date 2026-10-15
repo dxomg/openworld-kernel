@@ -33,7 +33,9 @@ Common to both arches:
 
 - **Block & net**: `virtio_blk`, `virtio_net` (with `virtio-mmio`; plus `virtio-pci` on x86_64)
 - **Console**: virtio console + serial console (8250 on x86, PL011 on arm64), early printk
-- **Balloon**: `virtio_balloon`
+- **Balloon**: `virtio_balloon` with aggressive patches (4 MiB batches,
+  20 ms retry, 4 MiB OOM deflate, cache reclaim/drop, 2 MiB page reporting
+  — see `.github/firecracker/patches/`)
 - **Networking**: IPv4 + IPv6, `AF_UNIX`, `AF_PACKET`, vsock
 - **Filesystems**: ext4, overlayfs, tmpfs, squashfs (x86_64), vfat (arm64), and `9p`
 - **Init**: built-in initramfs support (gzip), `devtmpfs`
@@ -88,6 +90,7 @@ The full kernel version is printed in the build log (`make kernelversion`), and 
   firecracker/
     kernel.config                         # x86_64 config fragment (main file)
     kernel.config.arm64                   # aarch64 config fragment
+    patches/                              # *.patch applied to linux.git pre-build
 ```
 
 The configs are *fragments*, not full `.config` files: the workflow copies the fragment onto `.config` and runs `make olddefconfig` to resolve the rest from Kconfig defaults. That keeps them readable and lets the 6.18 defaults fill in automatically. The exact generated config is published next to each image.

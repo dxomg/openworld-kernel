@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: openworld-kernel <noreply@openworld>
+Date: Thu, 15 Oct 2026 00:00:00 +0000
+Subject: [PATCH] balloon: reclaim file cache/slab for balloon pages (reclaim
+ larger, not just faster)
+
+Stock balloon_page_alloc() uses __GFP_NORETRY: allocation fails fast and
+only already-free pages end up in the balloon. A guest holding tens of
+MiB of file cache / reclaimable slab therefore reports lots of "freeable"
+memory to the host that the balloon can never take - the host can only
+reclaim what is already free.
+
+For overcommitted Firecracker hosts that want the balloon to take *more*,
+not just converge faster:
+
+- __GFP_NORETRY -> __GFP_RETRY_MAYFAIL. The allocator may now run direct
+  reclaim (drop clean file cache, shrink reclaimable slab) to satisfy
+  balloon allocations, but still fails instead of invoking the OOM killer
+  when nothing is reclaimable.
+- __GFP_NOMEMALLOC is kept so the balloon never dips into watermarks
+  reserves; __GFP_NOWARN is kept to stay quiet under pressure.
+
+Effect: inflating the balloon now converts guest page cache into
+host-reclaimable memory. A guest showing e.g. 30 MiB used + 70 MiB cache
+can be ballooned down close to used + unreclaimable kernel instead of
+leaving the cache resident on the host.
+
+Blast radius: balloon_page_alloc() is only used by balloon drivers; this
+image enables only virtio_balloon.
+
+Tunable: revert this hunk to restore stock fail-fast behaviour.
+
+Signed-off-by: openworld-kernel <noreply@openworld>
+---
+ mm/balloon_compaction.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/mm/balloon_compaction.c b/mm/balloon_compaction.c
+index 123456789014..123456789015 100644
+--- a/mm/balloon_compaction.c
++++ b/mm/balloon_compaction.c
+@@ -120,8 +120,13 @@
+  */
+ struct page *balloon_page_alloc(void)
+ {
++	/*
++	 * Aggressive: allow direct reclaim (drop file cache, shrink
++	 * reclaimable slab) so the balloon can also take cached memory,
++	 * but fail instead of OOM-killing when nothing is reclaimable.
++	 */
+ 	struct page *page = alloc_page(balloon_mapping_gfp_mask() |
+-				       __GFP_NOMEMALLOC | __GFP_NORETRY |
++				       __GFP_NOMEMALLOC | __GFP_RETRY_MAYFAIL |
+ 				       __GFP_NOWARN);
+ 	return page;
+ }
+
+--
+2.47.0
