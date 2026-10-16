@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: openworld-kernel <noreply@openworld>
+Date: Thu, 15 Oct 2026 00:00:00 +0000
+Subject: [PATCH] virtio_balloon: push pfn batches to a 64 MiB maximum
+
+0005 capped batches at 8192 pfns (32 MiB per round-trip on 4K
+pages) because a larger array risks probe-time high-order
+allocation failure - which cannot actually happen here: the pfn
+array is embedded in struct virtio_balloon (kzalloc'd with the
+device at probe, on fresh unfragmented memory), not separately
+allocated. So 16384 costs only +32 KiB of static device memory.
+
+64 MiB per tell_host() round-trip:
+
+- a 512 MiB inflate converges in 8 batches instead of 16,
+- the OOM drain loop (0009) now covers its 128 MiB budget in 2
+  batches instead of 4,
+- it pairs with the host-side pfn caps: the Firecracker fork must
+  raise MAX_PAGES_IN_DESC/MAX_PAGE_COMPACT_BUFFER to 16384 or it
+  rejects the larger descriptors ("bogus page count") and the
+  batches silently shrink back to the old 1 MiB effective size.
+
+No behaviour change when the host does not balloon.
+
+Tunable: edit the define below; keep it in sync with the host.
+
+Signed-off-by: openworld-kernel <noreply@openworld>
+
+
+Signed-off-by: openworld-kernel <noreply@openworld>
+---
+ drivers/virtio/virtio_balloon.c | 6 ++++--
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
+index 123456789036..123456789037 100644
+--- a/drivers/virtio/virtio_balloon.c
++++ b/drivers/virtio/virtio_balloon.c
+@@ -27,7 +27,13 @@
+  * page units.
+  */
+ #define VIRTIO_BALLOON_PAGES_PER_PAGE (unsigned int)(PAGE_SIZE >> VIRTIO_BALLOON_PFN_SHIFT)
+-#define VIRTIO_BALLOON_ARRAY_PFNS_MAX 8192
++/*
++ * Maximum: 64 MiB per inflate/deflate round-trip on 4K pages (16384
++ * pfns, 32x fewer round-trips than stock for a 512 MiB adjustment).
++ * The pfn array is embedded in struct virtio_balloon, so this costs
++ * +32 KiB of static device memory and no probe-time allocation.
++ */
++#define VIRTIO_BALLOON_ARRAY_PFNS_MAX 16384
+ /* Maximum number of (4k) pages to deflate on OOM notifications. */
+ #define VIRTIO_BALLOON_OOM_NR_PAGES 32768
+ #define VIRTIO_BALLOON_OOM_NOTIFY_PRIORITY 80
+-- 
+2.47.0

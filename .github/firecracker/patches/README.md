@@ -92,29 +92,55 @@ checkout before `make olddefconfig`, via the `Apply kernel patches` step in
   system-wide `drop_caches()`). Batches with progress keep the ~1ms
   fast path, so a guest that later frees memory is still picked up
   within a fraction of a second.
+- `0011-balloon-64mib-batches.patch` — maximum batches:
+  - `VIRTIO_BALLOON_ARRAY_PFNS_MAX` `8192 -> 16384` (64 MiB per
+    `tell_host()` round-trip on 4K pages; a 512 MiB inflate converges
+    in 8 batches instead of 16, and 0009's 128 MiB OOM drain takes 2
+    batches instead of 4).
+  - The pfn array is embedded in `struct virtio_balloon`, so this is
+    +32 KiB of static device memory, not a probe-time allocation (the
+    high-order-alloc risk 0005 mentioned does not apply to 6.18's
+    layout).
+  - **Host must keep up**: Firecracker's `MAX_PAGES_IN_DESC`/
+    `MAX_PAGE_COMPACT_BUFFER` must be raised to 16384 (done in the
+    openworld Firecracker fork). A stock/prebuilt VMM *rejects*
+    descriptors larger than its cap ("bogus page count, skipping") -
+    with the stock 256 cap the guest's batches silently shrink back
+    to an effective 1 MiB per descriptor.
+- `0012-balloon-dedup-drop-caches.patch` — don't re-scan when stuck:
+  - fingerprints the reclaimable set (file pages + reclaimable slab
+    pages, read warning-free via `global_node_page_state()`) and skips
+    the system-wide scan in `balloon_drop_caches()` when it is
+    unchanged since the last drop. With 0003/0006/0010, a stuck
+    balloon otherwise re-runs `lru_add_drain_all()` + a full
+    superblock walk + a shrinker pass ~5x/second finding nothing new;
+    this keeps the CPU free while still picking up any cache that
+    actually gets added between retries. The user-facing `drop_caches`
+    sysctl still forces a drop.
 
 ## Host side (Firecracker) - required for the savings
 
 Guest patches only raise the *ceiling* of what a balloon target can
-take; the host must still ask. For minimal host RSS (`free -m` says
-30 MiB used, host RSS near that + ~5-15 MiB Firecracker/QEMU overhead):
+take; the host must still ask. The openworld Firecracker fork carries
+the matching host side (see `openworld-firecracker`):
 
-```json
-{
-  "balloon": {
-    "amount_mib": 0,
-    "deflate_on_oom": true,
-    "stats_polling_interval_s": 1
-  }
-}
-```
+- a per-VM balloon device (`deflate_on_oom`, `stats_polling_interval_s
+  = 1`, `free_page_reporting` / `free_page_hinting`), and
+- a host-side balloon reaper that polls `GET /balloon/statistics`
+  (`free_memory` / `available_memory` / `disk_caches` / `oom_kill`) and
+  drives `PATCH /balloon` toward `max(0, available - floor)` with step
+  limits, immediate deflate on guest OOM growth, and a faster inflate
+  step while the host is memory-starved,
+- the pfn caps raised to 16384 (`MAX_PAGES_IN_DESC` /
+  `MAX_PAGE_COMPACT_BUFFER`) so 0011's 64 MiB batches are consumed in
+  one pass instead of being rejected.
 
-Poll `balloon stats` (`mem_free`, `mem_available`, `caches`) per VM and
-set `amount_mib = max(0, vm_ram - (mem_available + slack))` with a
+Manual equivalent (no reaper): poll balloon stats per VM and set
+`amount_mib = max(0, vm_ram - (mem_available + slack))` with a
 ~10-20 MiB slack so the guest never OOMs; `deflate_on_oom` (patched to
-drain up to 128 MiB/event) is the safety net. Without a balloon target the guest
-cannot free host memory by itself - that is why "guest 30 MiB / host
-130 MiB" happens with no balloon policy.
+drain up to 128 MiB/event) is the safety net. Without a balloon target
+the guest cannot free host memory by itself - that is why "guest
+30 MiB / host 130 MiB" happens with no balloon policy.
 
 ## Adding a patch
 

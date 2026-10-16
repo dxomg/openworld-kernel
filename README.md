@@ -33,13 +33,18 @@ Common to both arches:
 
 - **Block & net**: `virtio_blk`, `virtio_net` (with `virtio-mmio`; plus `virtio-pci` on x86_64)
 - **Console**: virtio console + serial console (8250 on x86, PL011 on arm64), early printk
-- **Balloon**: `virtio_balloon` with maximum-reclaim patches (32 MiB batches,
-  ~1 ms retry, 128 MiB OOM deflate across looped batches, reserves allowed
-  for balloon alloc, drop-caches + dirty-flush on stall, quartered watermarks,
-  10x `vfs_cache_pressure`, floored dirty ratios (1/2), order-0 / 100 ms
-  page reporting — see `.github/firecracker/patches/`). Set a host balloon target
-  (`amount_mib` from `stats`, `deflate_on_oom:true`) or the guest cannot
-  free host memory by itself.
+- **Balloon**: `virtio_balloon` with maximum-reclaim patches (64 MiB
+  batches, ~1 ms retry, 128 MiB OOM deflate across looped batches,
+  reserves allowed for balloon alloc, drop-caches + dirty-flush on stall
+  (skipped when nothing is new), quartered watermarks, 10x
+  `vfs_cache_pressure`, floored dirty ratios (1/2), order-0 / 100 ms
+  page reporting — see `.github/firecracker/patches/`). The host must
+  drive the balloon: the openworld Firecracker fork attaches a
+  per-VM device (`deflate_on_oom`, stats, free-page reporting/hinting)
+  and runs a balloon reaper that inflates toward
+  `available - 16 MiB` and deflates on guest OOM, with its pfn caps
+  raised to match the 64 MiB batches. Without that host side the guest
+  cannot free host memory by itself.
 - **Networking**: IPv4 + IPv6, `AF_UNIX`, `AF_PACKET`, vsock
 - **Filesystems**: ext4, overlayfs, tmpfs, squashfs (x86_64), vfat (arm64), and `9p`
 - **Init**: built-in initramfs support (gzip), `devtmpfs`
