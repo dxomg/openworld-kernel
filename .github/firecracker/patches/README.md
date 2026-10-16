@@ -86,6 +86,12 @@ checkout before `make olddefconfig`, via the `Apply kernel patches` step in
   is made (one call moves at most one 32 MiB batch). A spiking guest
   gets up to 4x32 MiB back per OOM event instead of OOM-killing in a
   loop while the host re-inflates. No-op when the balloon is empty.
+- `0010-balloon-backoff-on-zero-progress.patch` — don't spin when stuck:
+  a batch that allocated nothing sleeps the stock 200ms before the outer
+  work requeues (~5Hz retries instead of ~500Hz of flusher kicks and
+  system-wide `drop_caches()`). Batches with progress keep the ~1ms
+  fast path, so a guest that later frees memory is still picked up
+  within a fraction of a second.
 
 ## Host side (Firecracker) - required for the savings
 

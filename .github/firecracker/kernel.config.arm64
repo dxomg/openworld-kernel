@@ -99,7 +99,7 @@ CONFIG_ZSWAP_DEFAULT_ON=y
 # migration), host free-page reporting, and full vmstat counters so the host
 # sees swap/fault/stall/scan pressure. Patched driver batching lives in
 # .github/firecracker/patches/0001-virtio-balloon-aggressive-inflate.patch
-# through 0009-balloon-drain-oom-budget.patch.
+# through 0010-balloon-backoff-on-zero-progress.patch.
 CONFIG_COMPACTION=y
 CONFIG_MIGRATION=y
 CONFIG_BALLOON_COMPACTION=y
