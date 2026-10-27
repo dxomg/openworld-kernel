@@ -149,9 +149,11 @@ CONFIG_VIRTIO_NET=y
 CONFIG_VIRTIO_CONSOLE=y
 CONFIG_VIRTIO_BALLOON=y
 CONFIG_VIRTIO_VSOCKETS=y
-# Serial console and PTYs only; configure getty on ttyAMA0.
-# CONFIG_VT is not set
-# CONFIG_INPUT is not set
+# Virtual terminals for /dev/tty1-6 and init/getty compatibility.
+# VT requires the input core; physical input drivers stay disabled.
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+CONFIG_INPUT=y
 # CONFIG_SERIO is not set
 # CONFIG_INPUT_KEYBOARD is not set
 # CONFIG_INPUT_MOUSE is not set

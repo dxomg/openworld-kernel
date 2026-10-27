@@ -5,11 +5,11 @@ Size-optimized Linux kernels for [Firecracker](https://firecracker-microvm.githu
 Both images target Linux 6.18 LTS from `linux-stable` (`linux-6.18.y`), use
 `-Os`, and have zero modules. The default profile targets **stock Firecracker**.
 
-## Validated baseline (Linux 6.18.57, before memory hotplug)
+## Validated baseline (Linux 6.18.57, before memory hotplug/VT restoration)
 
 Local GCC 14.2 / binutils 2.44 build measurements (not a published release):
 
-These measurements and smoke tests predate re-enabling memory hotplug.
+These measurements and smoke tests predate re-enabling memory hotplug and virtual terminals.
 CI will report updated image sizes for the current configuration.
 
 | Architecture | Deployment artifact | File size |
@@ -63,7 +63,8 @@ gh release download <release-tag> --pattern 'vmlinux-*' --pattern 'Image-*' -D k
 Common to both arches:
 
 - **Block & net**: `virtio_blk`, `virtio_net` (with `virtio-mmio`; plus `virtio-pci` on x86_64)
-- **Console**: virtio console + serial console (8250 on x86, PL011 on arm64), early printk
+- **Console**: virtual terminals (`/dev/tty1-6`), virtio console + serial console
+  (8250 on x86, PL011 on arm64), early printk
 - **Balloon**: stock-compatible **256-PFN / 1 MiB descriptors**, sustained
   direct reclaim, immediate submission of partial batches, 200 ms backoff on
   zero progress, and up to **128 MiB OOM deflation** across batches.
@@ -92,8 +93,9 @@ Common to both arches:
 
 Since this is a size-optimized image, several things a desktop kernel would have are off by default. Most are configurable — see `kernel.config` and re-run `olddefconfig`.
 
-- **Serial terminals and PTYs only**: no `/dev/tty1-6`, input devices or serio.
-  Configure init/getty for `ttyS0` (x86) or `ttyAMA0` (arm64).
+- **No physical input devices or serio**: the input core is enabled for virtual
+  terminals. Init/getty can use `/dev/tty1-6`; interactive Firecracker console
+  access uses `ttyS0` (x86) or `ttyAMA0` (arm64).
 - **No 9p**: stock Firecracker does not expose a virtio-9p device.
 - **No PMU/tracing**: x86's base `PERF_EVENTS` is force-selected by the arch, but all uncore/RAPL/CSTATE PMU drivers and the `FTRACE`/`TRACING`/`uprobe`/`kprobe` stack are off.
 - **Frame-pointer unwinder** instead of ORC (~1.6 MiB of unwind tables saved).

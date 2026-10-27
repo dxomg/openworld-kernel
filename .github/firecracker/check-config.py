@@ -26,6 +26,7 @@ def main():
             "SWAP", "ZSWAP", "ZSWAP_DEFAULT_ON", "ZSWAP_SHRINKER_DEFAULT_ON",
             "ZSWAP_COMPRESSOR_DEFAULT_LZ4", "SYSCTL", "PROC_FS", "SYSFS",
             "EXT4_FS", "DEVTMPFS", "BINFMT_ELF", "RD_GZIP", "UNIX98_PTYS",
+            "TTY", "VT", "VT_CONSOLE", "INPUT",
             "SECURITY_APPARMOR", "SECURITY_SELINUX",
         )
     }
@@ -38,7 +39,7 @@ def main():
         required.update(ARM64_4K_PAGES="y", SERIAL_AMBA_PL011_CONSOLE="y")
 
     disabled = (
-        "MODULES", "IKCONFIG", "VT", "INPUT", "SERIO", "NET_9P", "9P_FS",
+        "MODULES", "IKCONFIG", "SERIO", "NET_9P", "9P_FS",
         "NUMA", "IDLE_PAGE_TRACKING", "SLUB_CPU_PARTIAL",
         "TRANSPARENT_HUGEPAGE", "HUGETLBFS", "DEBUG_INFO", "DEBUG_INFO_BTF",
         "DEBUG_MISC", "RCU_TRACE", "RD_BZIP2", "RD_LZMA", "RD_XZ", "RD_LZO",
