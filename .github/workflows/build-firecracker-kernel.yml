@@ -36,11 +36,13 @@ jobs:
       matrix:
         include:
           - arch: x86_64
+            build_target: vmlinux
             config_path: ${{ inputs.config_path || '.github/firecracker/kernel.config' }}
             install: ccache gcc make binutils flex bison bc libssl-dev libelf-dev cpio dwarves kmod perl
             file_match: 'ELF*x86-64*'
             strip_bin: strip
           - arch: arm64
+            build_target: Image
             config_path: .github/firecracker/kernel.config.arm64
             install: ccache gcc make binutils gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu flex bison bc libssl-dev libelf-dev cpio dwarves kmod perl
             file_match: 'ELF*ARM*aarch64*'
@@ -85,7 +87,7 @@ jobs:
           fi
           for p in "${patches[@]}"; do
             echo "Applying $(basename "$p")"
-            patch -p1 --forward < "$p"
+            patch --batch --fuzz=0 -p1 --forward < "$p"
           done
 
       - name: Configure
@@ -93,13 +95,14 @@ jobs:
         run: |
           cp "$GITHUB_WORKSPACE/$CONFIG_PATH" .config
           make olddefconfig
+          python3 "$GITHUB_WORKSPACE/.github/firecracker/check-config.py" .config "$ARCH"
 
       - name: Build kernel
         working-directory: linux
         run: |
           export PATH="/usr/lib/ccache:$PATH"
           export CCACHE_MAXSIZE=2G
-          make -j "$(nproc)" vmlinux
+          make -j "$(nproc)" "${{ matrix.build_target }}"
 
       - name: Package kernel
         working-directory: linux
@@ -112,15 +115,28 @@ jobs:
           fi
           cp .config "$GITHUB_WORKSPACE/kernel-${{ matrix.arch }}-$VERSION.config"
           cp vmlinux "$GITHUB_WORKSPACE/vmlinux-${{ matrix.arch }}-$VERSION"
-          ${{ matrix.strip_bin }} -g vmlinux -o "$GITHUB_WORKSPACE/vmlinux-${{ matrix.arch }}-$VERSION-stripped"
+          ${{ matrix.strip_bin }} --strip-all vmlinux -o "$GITHUB_WORKSPACE/vmlinux-${{ matrix.arch }}-$VERSION-stripped"
+          python3 "$GITHUB_WORKSPACE/.github/firecracker/check-image.py" \
+            vmlinux "$GITHUB_WORKSPACE/vmlinux-${{ matrix.arch }}-$VERSION-stripped"
+          if [[ "$ARCH" == arm64 ]]; then
+            cp arch/arm64/boot/Image "$GITHUB_WORKSPACE/Image-arm64-$VERSION"
+            python3 "$GITHUB_WORKSPACE/.github/firecracker/check-image.py" \
+              vmlinux "$GITHUB_WORKSPACE/vmlinux-arm64-$VERSION-stripped" \
+              --arm64-image "$GITHUB_WORKSPACE/Image-arm64-$VERSION"
+          fi
           cd "$GITHUB_WORKSPACE"
-          sha256sum "vmlinux-${{ matrix.arch }}-$VERSION" "vmlinux-${{ matrix.arch }}-$VERSION-stripped" > SHA256SUMS-${{ matrix.arch }}
+          sha256sum "vmlinux-${{ matrix.arch }}-$VERSION" "vmlinux-${{ matrix.arch }}-$VERSION-stripped" \
+            "kernel-${{ matrix.arch }}-$VERSION.config" > SHA256SUMS-${{ matrix.arch }}
+          if [[ "$ARCH" == arm64 ]]; then
+            sha256sum "Image-arm64-$VERSION" >> SHA256SUMS-arm64
+          fi
           echo "KERNEL_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Report kernel size
         run: |
           echo "Kernel size summary (${{ matrix.arch }}, Linux ${{ env.KERNEL_VERSION }}):"
-          for f in vmlinux-${{ matrix.arch }}-*; do
+          shopt -s nullglob
+          for f in vmlinux-${{ matrix.arch }}-* Image-${{ matrix.arch }}-*; do
             bytes="$(stat -c%s "$f")"
             echo "$f  $(( bytes / 1024 )) KiB"
           done
@@ -132,6 +148,7 @@ jobs:
           path: |
             vmlinux-${{ matrix.arch }}-${{ env.KERNEL_VERSION }}
             vmlinux-${{ matrix.arch }}-${{ env.KERNEL_VERSION }}-stripped
+            Image-${{ matrix.arch }}-${{ env.KERNEL_VERSION }}
             kernel-${{ matrix.arch }}-${{ env.KERNEL_VERSION }}.config
             SHA256SUMS-${{ matrix.arch }}
           if-no-files-found: error
@@ -170,9 +187,9 @@ jobs:
             gh release delete "$RELEASE_TAG" --yes
           fi
           gh release create "$RELEASE_TAG" \
-            artifacts/vmlinux-* artifacts/kernel-*.config artifacts/SHA256SUMS-* \
+            artifacts/vmlinux-* artifacts/Image-* artifacts/kernel-*.config artifacts/SHA256SUMS-* \
             --title "Firecracker kernel $RELEASE_VERSION ($BUILD_DATE)" \
-            --notes "Weekly Firecracker microVM kernel build for Linux $RELEASE_VERSION. x86_64 and arm64 images (unstripped and stripped), per-arch kernel configs and SHA256 checksums."
+            --notes "Linux $RELEASE_VERSION for stock Firecracker. Boot x86_64 with the stripped vmlinux ELF; boot arm64 with Image-arm64. Includes unstripped/stripped ELF files, resolved configs and SHA256 checksums."
 
       - name: Verify release
         run: gh release view "$RELEASE_TAG" --json name,assets --jq '.name, (.assets[].name)'

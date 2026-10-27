@@ -1,0 +1,2 @@
+# Unified diffs intentionally prefix blank lines and tab-indented context with a space.
+.github/firecracker/patches/*.patch whitespace=-blank-at-eol,-space-before-tab

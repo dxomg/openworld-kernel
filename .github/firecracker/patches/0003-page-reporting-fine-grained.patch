@@ -1,0 +1,49 @@
+From: openworld-kernel <noreply@openworld>
+Subject: [PATCH] mm: default to order-zero reporting at a 100ms cadence
+
+Setting prdev->order to zero does not select order-zero reporting: the
+registration code treats zero as an unspecified driver preference and
+falls back to pageblock_order. Set the reporting core's default instead.
+The existing page_reporting.page_reporting_order parameter still overrides
+this, including when an operator prefers order 9 to reduce host THP splits.
+
+Use a 100ms reporting delay. Reporting remains event-driven and only runs
+when a VMM negotiates VIRTIO_BALLOON_F_REPORTING. It reports free pages;
+unlike balloon inflation, it does not reduce guest MemTotal or evict cache.
+
+Signed-off-by: openworld-kernel <noreply@openworld>
+---
+diff --git a/mm/page_reporting.c b/mm/page_reporting.c
+--- a/mm/page_reporting.c
++++ b/mm/page_reporting.c
+@@ -11,8 +11,8 @@
+ #include "page_reporting.h"
+ #include "internal.h"
+ 
+-/* Initialize to an unsupported value */
+-unsigned int page_reporting_order = -1;
++/* MicroVM default: report even fragmented single free pages. */
++unsigned int page_reporting_order = 0;
+ 
+ static int page_order_update_notify(const char *val, const struct kernel_param *kp)
+ {
+@@ -47,7 +47,7 @@
+  */
+ EXPORT_SYMBOL_GPL(page_reporting_order);
+ 
+-#define PAGE_REPORTING_DELAY	(2 * HZ)
++#define PAGE_REPORTING_DELAY	msecs_to_jiffies(100)
+ static struct page_reporting_dev_info __rcu *pr_dev_info __read_mostly;
+ 
+ enum {
+@@ -339,8 +339,8 @@
+ err_out:
+ 	/*
+ 	 * If the state has reverted back to requested then there may be
+-	 * additional pages to be processed. We will defer for 2s to allow
+-	 * more pages to accumulate.
++	 * additional pages to be processed. Defer for PAGE_REPORTING_DELAY
++	 * to allow more pages to accumulate.
+ 	 */
+ 	state = atomic_cmpxchg(&prdev->state, state, PAGE_REPORTING_IDLE);
+ 	if (state == PAGE_REPORTING_REQUESTED)

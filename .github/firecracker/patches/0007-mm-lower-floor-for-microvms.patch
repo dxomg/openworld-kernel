@@ -3,16 +3,16 @@ From: openworld-kernel <noreply@openworld>
 Date: Thu, 15 Oct 2026 00:00:00 +0000
 Subject: [PATCH] mm: lower unreclaimable floor for microVM overcommit
 
-Even with reclaim-allowed balloon allocation and drop-caches-on-stall,
-three stock defaults keep MiBs stranded on the host behind the balloon:
+Tune three VM defaults for density alongside reclaim-allowed balloon
+allocation:
 
 - min_free_kbytes watermarks are unballoonable reserves. Quarter the
   stock sqrt(lowmem*16) curve (128-1024MB guests: ~2-3 MiB freed).
-  Fresh microVMs boot with empty caches so the smaller reserve is safe.
+  This trades burst headroom for density; size host-side slack to workload.
   Tunable at runtime via /proc/sys/vm/min_free_kbytes.
-- vfs_cache_pressure 100 -> 1000. Dentry/inode slab is otherwise
-  unballoonable and strands MiBs on file-heavy guests; 10x pressure
-  converts it into balloonable memory faster.
+- vfs_cache_pressure 100 -> 1000. Reclaimable dentry/inode slab can
+  retain MiBs on file-heavy guests; 10x pressure converts it into
+  balloonable memory faster, at the cost of metadata-cache misses.
   Tunable at runtime via /proc/sys/vm/vfs_cache_pressure.
 - dirty ratios floored (background 10 -> 1, ratio 20 -> 2) so dirty
   pages start writeback sooner and become clean (hence droppable and
@@ -36,9 +36,9 @@ index 123456789030..123456789031 100644
   */
 -static int sysctl_vfs_cache_pressure __read_mostly = 100;
 +/*
-+ * MicroVM: reclaim dentries/inodes 10x more aggressively. Dentry/inode
-+ * slab is otherwise unballoonable and strands MiBs on the host; higher
-+ * pressure converts it into balloonable memory faster.
++ * MicroVM: reclaim dentries/inodes 10x more aggressively. Higher
++ * pressure converts reclaimable slab into balloonable memory faster,
++ * at the cost of additional metadata I/O on cache misses.
 + * (Tunable at runtime via /proc/sys/vm/vfs_cache_pressure.)
 + */
 +static int sysctl_vfs_cache_pressure __read_mostly = 1000;
@@ -84,8 +84,8 @@ index 123456789034..123456789035 100644
 +	/*
 +	 * MicroVM: quarter the stock sqrt(lowmem*16) reserve. Watermark
 +	 * reserves are unballoonable; on 128-1024 MiB guests this frees
-+	 * ~2-3 MiB of host RSS. Fresh microVMs boot with empty caches,
-+	 * so the smaller reserve is safe.
++	 * reserve headroom. Size host-side slack to workload bursts;
++	 * the balloon allocator must still respect emergency reserves.
 +	 * (Tunable at runtime via /proc/sys/vm/min_free_kbytes.)
 +	 */
 +	new_min_free_kbytes = int_sqrt(lowmem_kbytes * 16) / 4;
@@ -97,7 +97,5 @@ index 123456789034..123456789035 100644
  		pr_warn("min_free_kbytes is not updated to %d because user defined value %d is preferred\n",
  				new_min_free_kbytes, user_min_free_kbytes);
 
--- 
-2.47.0
 -- 
 2.47.0

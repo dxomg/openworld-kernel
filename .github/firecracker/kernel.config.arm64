@@ -1,9 +1,7 @@
 # Minimal Linux 6.18 LTS kernel config for Firecracker microVMs (aarch64).
-# Size-optimized (-Os): targets a ~10 MB vmlinux image.
+# Size-optimized (-Os), for stock Firecracker hosting guests.
 
-# EXPERT=y is required so SLUB_TINY (and friends) can be turned on via
-# olddefconfig. Verified safe for this fragment: the only
-# EXPERT-sensitive default (NAMESPACES) is pinned explicitly below.
+# EXPERT=y makes size-related options visible to olddefconfig.
 CONFIG_EXPERT=y
 
 # Disable modules - build a fully static, self-contained kernel.
@@ -19,8 +17,9 @@ CONFIG_POSIX_MQUEUE=y
 # CONFIG_WATCH_QUEUE is not set
 CONFIG_CROSS_MEMORY_ATTACH=y
 CONFIG_AUDIT=y
-CONFIG_IKCONFIG=y
-CONFIG_IKCONFIG_PROC=y
+# The resolved config is published alongside the image.
+# CONFIG_IKCONFIG is not set
+# CONFIG_IKCONFIG_PROC is not set
 CONFIG_CGROUPS=y
 CONFIG_CGROUP_FREEZER=y
 CONFIG_CGROUP_DEVICE=y
@@ -32,10 +31,17 @@ CONFIG_IPC_NS=y
 CONFIG_PID_NS=y
 CONFIG_NET_NS=y
 CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+# Gzip/uncompressed initramfs only; omit unused decompressor code.
+# CONFIG_RD_BZIP2 is not set
+# CONFIG_RD_LZMA is not set
+# CONFIG_RD_XZ is not set
+# CONFIG_RD_LZO is not set
+# CONFIG_RD_LZ4 is not set
+# CONFIG_RD_ZSTD is not set
 CONFIG_BINFMT_ELF=y
 CONFIG_BINFMT_SCRIPT=y
-# xz BCJ filters for foreign CPU architectures: plain xz payloads
-# (incl. initramfs) decode without them; keep only the native ARM64 one.
+# No foreign-architecture BCJ filters if XZ is enabled by another consumer.
 # CONFIG_XZ_DEC_X86 is not set
 # CONFIG_XZ_DEC_POWERPC is not set
 # CONFIG_XZ_DEC_ARM is not set
@@ -44,11 +50,15 @@ CONFIG_BINFMT_SCRIPT=y
 # CONFIG_XZ_DEC_RISCV is not set
 CONFIG_CC_OPTIMIZE_FOR_SIZE=y
 # CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE is not set
-CONFIG_MICROVM=y
 
 # Processor type and features (arm64)
 CONFIG_SMP=y
 CONFIG_NR_CPUS=64
+CONFIG_ARM64_4K_PAGES=y
+# CONFIG_NUMA is not set
+# Retain memory hot-add/offline/remove support for capable VMMs.
+CONFIG_MEMORY_HOTPLUG=y
+CONFIG_MEMORY_HOTREMOVE=y
 CONFIG_HZ_250=y
 CONFIG_ARM_ARCH_TIMER=y
 CONFIG_ARM_PSCI_FW=y
@@ -87,28 +97,26 @@ CONFIG_IPV6=y
 # CONFIG_BRIDGE is not set
 # CONFIG_VLAN_8021Q is not set
 CONFIG_VSOCKETS=y
-CONFIG_NET_9P=y
-CONFIG_NET_9P_VIRTIO=y
-CONFIG_9P_FS=y
+# Firecracker does not expose a virtio-9p device.
+# CONFIG_NET_9P is not set
+# CONFIG_9P_FS is not set
 
 # Device drivers
 CONFIG_SWAP=y
 CONFIG_ZSWAP=y
 CONFIG_ZSWAP_DEFAULT_ON=y
-# Maximum-reclaim virtio-balloon: movable balloon pages (compaction +
-# migration), host free-page reporting, and full vmstat counters so the host
-# sees swap/fault/stall/scan pressure. Patched driver batching lives in
-# .github/firecracker/patches/0001-virtio-balloon-aggressive-inflate.patch
-# through 0010-balloon-backoff-on-zero-progress.patch.
+CONFIG_ZSWAP_SHRINKER_DEFAULT_ON=y
+CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZ4=y
+# Movable balloon pages, free-page reporting, and vmstat pressure counters.
+# Stock-compatible 256-PFN descriptors; aggressive reclaim lives in patches/.
 CONFIG_COMPACTION=y
 CONFIG_MIGRATION=y
 CONFIG_BALLOON_COMPACTION=y
 CONFIG_PAGE_REPORTING=y
 CONFIG_VM_EVENT_COUNTERS=y
-# Smaller slab footprint: less unreclaimable kernel memory, so the balloon
-# ceiling is higher (and the image is smaller). Costs allocator throughput
-# on slab-heavy workloads - revert for those guests.
+# Minimum slab footprint; sacrifices allocator scalability for density.
 CONFIG_SLUB_TINY=y
+# CONFIG_SLUB_CPU_PARTIAL is not set
 # Merge same-size slab caches: less fragmentation, more memory ends up
 # balloonable instead of stranded in half-empty slabs.
 CONFIG_SLAB_MERGE_DEFAULT=y
@@ -117,19 +125,17 @@ CONFIG_SLAB_MERGE_DEFAULT=y
 # into host-reclaimable memory instead of grinding.
 CONFIG_LRU_GEN=y
 CONFIG_LRU_GEN_ENABLED=y
-# No transparent hugepages: THP collapses free memory into pinned 2MB
-# compound pages the balloon cannot take order-0, fragmenting the guest
-# and stranding host memory. Balloon + reporting work best on 4K pages.
+# Use base pages to avoid THP collapse/split overhead during balloon churn.
+# THPs are reclaimable/splittable, but not directly usable as order-0 pages.
 # CONFIG_TRANSPARENT_HUGEPAGE is not set
 # No hugetlbfs pool: hugetlb pages are pinned and unballoonable, plus
 # metadata overhead.
 # CONFIG_HUGETLBFS is not set
-# Small printk ring (16KB): saves pinned kernel memory. Increase if you
-# lose boot logs.
+# Fixed 16 KiB printk ring, including on multi-vCPU guests.
 CONFIG_LOG_BUF_SHIFT=14
-# Idle-page tracking: lets host-side policy see which guest pages are cold
-# (/sys/kernel/mm/page_idle/bitmap) for smarter per-VM balloon targets.
-CONFIG_IDLE_PAGE_TRACKING=y
+CONFIG_LOG_CPU_MAX_BUF_SHIFT=0
+# Firecracker balloon statistics do not use guest page-idle bitmaps.
+# CONFIG_IDLE_PAGE_TRACKING is not set
 CONFIG_DEVTMPFS=y
 CONFIG_DEVTMPFS_MOUNT=y
 CONFIG_HW_RANDOM=y
@@ -143,8 +149,10 @@ CONFIG_VIRTIO_NET=y
 CONFIG_VIRTIO_CONSOLE=y
 CONFIG_VIRTIO_BALLOON=y
 CONFIG_VIRTIO_VSOCKETS=y
-# No keyboard/mouse in a microVM (VT selects INPUT, so the core stays,
-# but all input-device drivers go).
+# Serial console and PTYs only; configure getty on ttyAMA0.
+# CONFIG_VT is not set
+# CONFIG_INPUT is not set
+# CONFIG_SERIO is not set
 # CONFIG_INPUT_KEYBOARD is not set
 # CONFIG_INPUT_MOUSE is not set
 # CONFIG_INPUT_JOYSTICK is not set
@@ -241,6 +249,8 @@ CONFIG_SYSFS=y
 # CONFIG_DEBUG_KERNEL is not set
 # CONFIG_DEBUG_INFO is not set
 # CONFIG_DEBUG_INFO_BTF is not set
+# CONFIG_DEBUG_MISC is not set
+# CONFIG_RCU_TRACE is not set
 
 # Security frameworks (AppArmor + SELinux)
 CONFIG_SECURITY=y

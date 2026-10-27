@@ -1,68 +1,70 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: openworld-kernel <noreply@openworld>
-Date: Thu, 15 Oct 2026 00:00:00 +0000
-Subject: [PATCH] virtio_balloon: more aggressive inflation/deflation for
- overcommitted hosts
+Subject: [PATCH] virtio_balloon: fast progress and full OOM relief with stock VMMs
 
-Stock virtio-balloon converges slowly on large inflate/deflate requests,
-which hurts dense Firecracker hosts that balloon many microVMs at once:
+Keep the upstream 256-PFN (1 MiB) descriptor size. Stock Firecracker
+rejects larger inflate descriptors; it does not split them. Small batches
+also reduce the contiguous allocation needed for struct virtio_balloon.
 
-- VIRTIO_BALLOON_ARRAY_PFNS_MAX=256 moves only 1 MiB (4K pages) per
-  inflate/deflate virtqueue round-trip, so a 512 MiB inflate needs 512
-  tell_host() round-trips.
-- fill_balloon() sleeps 200ms after every allocation failure, so
-  inflation under memory pressure stalls for seconds.
-- OOM deflation releases only 256 pages (1 MiB) per OOM event.
+Publish partially filled batches immediately rather than sleeping before
+telling the host. Back off for 200ms only when no pages were obtained,
+outside balloon_lock so OOM deflation can run during the wait.
 
-Make ballooning more aggressive for microVM overcommit:
-
-- 256 -> 1024 pfns per batch (4 MiB per round-trip on 4K pages, 4x fewer
-  round-trips; the pfn array grows from 1 KiB to 4 KiB).
-- 200ms -> 20ms retry sleep on allocation failure. The outer
-  update_balloon_size work requeues until diff==0, so this makes large
-  inflates converge ~10x faster under pressure without spinning.
-- OOM deflate 256 -> 1024 pages (up to 4 MiB freed per OOM event).
-
-No behaviour change when the host does not balloon: towards_target()==0
-never enters fill/leak paths. All virtio feature bits (stats,
-deflate-on-OOM, free-page-hint, reporting, poison) are untouched.
-
-Tunable: edit the two defines / msleep below to taste.
+Drain up to 128 MiB on an OOM notification, across stock-sized descriptors.
+Stop if the balloon is empty or no page can be dequeued. Host policy must
+still lower the target under pressure; deflate_on_oom is a last resort.
 
 Signed-off-by: openworld-kernel <noreply@openworld>
 ---
- drivers/virtio/virtio_balloon.c | 9 ++++++---
- 1 file changed, 6 insertions(+), 3 deletions(-)
-
 diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
-index 123456789012..123456789013 100644
 --- a/drivers/virtio/virtio_balloon.c
 +++ b/drivers/virtio/virtio_balloon.c
-@@ -26,9 +26,9 @@
-  * page units.
-  */
+@@ -28,7 +28,7 @@
  #define VIRTIO_BALLOON_PAGES_PER_PAGE (unsigned int)(PAGE_SIZE >> VIRTIO_BALLOON_PFN_SHIFT)
--#define VIRTIO_BALLOON_ARRAY_PFNS_MAX 256
-+#define VIRTIO_BALLOON_ARRAY_PFNS_MAX 1024
+ #define VIRTIO_BALLOON_ARRAY_PFNS_MAX 256
  /* Maximum number of (4k) pages to deflate on OOM notifications. */
 -#define VIRTIO_BALLOON_OOM_NR_PAGES 256
-+#define VIRTIO_BALLOON_OOM_NR_PAGES 1024
++#define VIRTIO_BALLOON_OOM_NR_PAGES 32768
  #define VIRTIO_BALLOON_OOM_NOTIFY_PRIORITY 80
-
+ 
  #define VIRTIO_BALLOON_FREE_PAGE_ALLOC_FLAG (__GFP_NORETRY | __GFP_NOWARN | \
-@@ -258,8 +258,11 @@
+@@ -258,8 +258,6 @@
  			dev_info_ratelimited(&vb->vdev->dev,
  					     "Out of puff! Can't get %u pages\n",
  					     VIRTIO_BALLOON_PAGES_PER_PAGE);
 -			/* Sleep for at least 1/5 of a second before retry. */
 -			msleep(200);
-+			/*
-+			 * Aggressive: retry quickly so large inflates converge
-+			 * faster under pressure (outer work requeues on diff).
-+			 */
-+			msleep(20);
  			break;
  		}
-
---
-2.47.0
+ 
+@@ -287,6 +285,10 @@
+ 		tell_host(vb, vb->inflate_vq);
+ 	mutex_unlock(&vb->balloon_lock);
+ 
++	/* Publish progress promptly; only back off when nothing is reclaimable. */
++	if (!num_allocated_pages)
++		msleep(200);
++
+ 	return num_allocated_pages;
+ }
+ 
+@@ -913,9 +915,18 @@
+ 	struct virtio_balloon *vb = container_of(nb,
+ 						 struct virtio_balloon, oom_nb);
+ 	unsigned long *freed = parm;
++	unsigned long remaining = VIRTIO_BALLOON_OOM_NR_PAGES;
++	unsigned long got;
+ 
+-	*freed += leak_balloon(vb, VIRTIO_BALLOON_OOM_NR_PAGES) /
+-		  VIRTIO_BALLOON_PAGES_PER_PAGE;
++	/* Each leak is capped at one stock-compatible descriptor. */
++	while (remaining) {
++		got = leak_balloon(vb, remaining);
++		if (!got)
++			break;
++		*freed += got / VIRTIO_BALLOON_PAGES_PER_PAGE;
++		remaining -= got;
++		cond_resched();
++	}
+ 	update_balloon_size(vb);
+ 
+ 	return NOTIFY_OK;
